@@ -22,6 +22,11 @@ struct FullArtworkFrameKey: PreferenceKey {
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
+private struct LibraryScrollOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 /// The compact and expanded layouts remain mounted together. A single overlay interpolates
 /// the poster and track identity between their measured frames, so the transition can track a drag.
 struct MusicSheetScene: View {
@@ -38,7 +43,9 @@ struct MusicSheetScene: View {
     @State private var artworkDragX: CGFloat = 0
     @State private var isArtworkSwipeSettling = false
     @State private var posterAmbientColors: [Color] = []
-    @State private var posterPulse = false
+    @State private var libraryScrollOffset: CGFloat = 0
+    @State private var libraryDragStartedAtTop = false
+    @State private var librarySheetDragOffset: CGFloat = 0
 
     private var isExpanded: Bool { expansionProgress > 0.5 }
 
@@ -69,6 +76,7 @@ struct MusicSheetScene: View {
                 if isSheetVisible {
                     librarySheet(sceneHeight: geometry.size.height)
                         .frame(maxHeight: .infinity, alignment: .bottom)
+                        .offset(y: librarySheetDragOffset)
                         // The library's rounded card remains behind the player
                         // during expansion; fade the entire sheet out with it.
                         .opacity(1 - expansionProgress)
@@ -141,22 +149,6 @@ struct MusicSheetScene: View {
         }
         .onAppear { updatePosterAmbientColors() }
         .onChange(of: player.track.id) { _, _ in updatePosterAmbientColors() }
-        .onChange(of: player.isPlaying) { _, isPlaying in
-            guard !reduceMotion else {
-                posterPulse = false
-                return
-            }
-            if isPlaying {
-                // A subtle 2 pt expansion and return take 400 ms total.
-                withAnimation(.easeInOut(duration: 0.2).repeatForever(autoreverses: true)) {
-                    posterPulse = true
-                }
-            } else {
-                withAnimation(.easeOut(duration: 0.35)) {
-                    posterPulse = false
-                }
-            }
-        }
         .sensoryFeedback(.selection, trigger: isExpanded)
         .onOpenURL { url in
             guard url.scheme == "musichero" else { return }
@@ -234,8 +226,8 @@ struct MusicSheetScene: View {
                 .fill(Color.black.opacity(0.09))
                 .frame(width: 36, height: 5)
                 .frame(maxWidth: .infinity)
-                .frame(height: 33, alignment: .top)
-                .padding(.top, 8)
+                .frame(height: 24, alignment: .top)
+                .padding(.top, 4)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 12).onEnded { value in
@@ -246,8 +238,41 @@ struct MusicSheetScene: View {
                 )
                 .accessibilityLabel("Drag down to dismiss music library")
 
+            ZStack {
+                Text("Pavel’s Playlist")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+
+                HStack {
+                    Button {
+                        withAnimation(heroAnimation) { isSheetVisible = false }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(.black)
+                            .frame(width: 48, height: 48)
+                            .background(.white.opacity(0.82), in: Circle())
+                            .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close playlist")
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(height: 60)
+            .padding(.horizontal, 20)
+
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: LibraryScrollOffsetKey.self,
+                            value: proxy.frame(in: .named("libraryListScroll")).minY
+                        )
+                    }
+                    .frame(height: 0)
                     ForEach(DemoTrack.examples) { track in
                         TrackRow(track: track, selected: player.track.id == track.id) {
                             player.select(track)
@@ -267,12 +292,38 @@ struct MusicSheetScene: View {
                 // trailing content inset for the final row to clear its controls.
                 .padding(.bottom, 300)
             }
+            .coordinateSpace(name: "libraryListScroll")
             // Fill the sheet's available height; a fixed height here stopped the
             // scroll viewport well above the bottom on tall devices.
             .frame(maxHeight: .infinity)
             .scrollIndicators(.visible)
             .scrollBounceBehavior(.basedOnSize)
             .defaultScrollAnchor(.top)
+            .onPreferenceChange(LibraryScrollOffsetKey.self) { libraryScrollOffset = $0 }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        if value.translation.height > 0, !libraryDragStartedAtTop {
+                            libraryDragStartedAtTop = libraryScrollOffset >= -1
+                        }
+                        guard libraryDragStartedAtTop, value.translation.height > 0 else { return }
+                        librarySheetDragOffset = value.translation.height
+                    }
+                    .onEnded { value in
+                        defer { libraryDragStartedAtTop = false }
+                        guard libraryDragStartedAtTop else { return }
+                        if value.translation.height > 120 || value.predictedEndTranslation.height > 190 {
+                            withAnimation(heroAnimation) {
+                                isSheetVisible = false
+                                librarySheetDragOffset = 0
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                                librarySheetDragOffset = 0
+                            }
+                        }
+                    }
+            )
         }
         .frame(height: sceneHeight - 46)
         .background(Color(red: 0.944, green: 0.945, blue: 0.962))
@@ -301,9 +352,9 @@ struct MusicSheetScene: View {
                 ? miniArtworkFrame
                 : CGRect(x: 16, y: sceneSize.height - 260, width: 45, height: 45)
             let destinationArtwork = fullArtworkFrame.width > 0
-                ? fullArtworkFrame.insetBy(dx: 30, dy: 30).offsetBy(dx: 0, dy: -25)
+                ? fullArtworkFrame.insetBy(dx: 30, dy: 30)
                 : CGRect(x: (sceneSize.width - coverSize) / 2,
-                         y: sceneSize.height * 0.22 - 25,
+                         y: sceneSize.height * 0.22,
                          width: coverSize, height: coverSize)
             let interpolatedArtworkFrame = interpolate(sourceArtwork, destinationArtwork, expansionProgress)
             // During the upward swipe, move the cover with the transition while
@@ -410,6 +461,16 @@ struct MusicSheetScene: View {
                             .opacity(0.72 * p)
                             .allowsHitTesting(false)
 
+                        // A restrained ambient halo sits close to the artwork
+                        // during playback and fades away when paused.
+                        ArtworkView(track: player.track, cornerRadius: 10 + (6 - 10) * p)
+                            .frame(width: artworkFrame.width, height: artworkFrame.height)
+                            .scaleEffect(1.035)
+                            .blur(radius: 12)
+                            .opacity(p * (player.isPlaying ? 0.24 : 0))
+                            .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
+                            .allowsHitTesting(false)
+
                         ArtworkView(track: player.track, cornerRadius: 10 + (6 - 10) * p)
                             .frame(width: artworkFrame.width, height: artworkFrame.height)
                     }
@@ -421,11 +482,10 @@ struct MusicSheetScene: View {
                         .scaleEffect(
                             swipeScale
                                 * outgoingPosterScale
-                                * (player.isPlaying && posterPulse && p > 0.5
-                                   ? 1 + 2 / max(1, min(artworkFrame.width, artworkFrame.height))
-                                   : 1),
+                                * (p > 0.5 ? (player.isPlaying ? 1 : 0.95) : 1),
                             anchor: .center
                         )
+                        .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 18)
