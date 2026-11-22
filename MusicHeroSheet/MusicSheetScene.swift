@@ -115,7 +115,10 @@ struct MusicSheetScene: View {
                     }
                     .frame(maxHeight: .infinity, alignment: .bottom)
                     .allowsHitTesting(true)
-                    .zIndex(2)
+                    // In the collapsed state the interpolated poster and title
+                    // must sit above the panel's white background. Once expanded,
+                    // keep the panel above the artwork so controls remain tappable.
+                    .zIndex(expansionProgress > 0.5 ? 4 : 2)
                 }
 
                 heroElements(sceneSize: geometry.size)
@@ -315,6 +318,9 @@ struct MusicSheetScene: View {
             let posterSpacing: CGFloat = 18
             let posterTravel = dragLimit + posterSpacing
             let resistedDrag = previewTrack == nil ? artworkDragX * 0.22 : artworkDragX
+            let outgoingSwipeProgress = min(1, max(0, abs(artworkDragX) / posterTravel))
+            let easedOutgoingProgress = 1 - pow(1 - outgoingSwipeProgress, 3)
+            let outgoingPosterScale = 1 - 0.08 * easedOutgoingProgress
             let slideTransition: AnyTransition = {
                 guard p > 0.5, let direction = player.artworkSlideDirection else { return .identity }
                 let travel = sceneSize.width + artworkFrame.width
@@ -335,7 +341,10 @@ struct MusicSheetScene: View {
                             1 - abs(previewCenterX - artworkFrame.midX) / posterTravel
                         ))
                         let easedApproachProgress = 1 - pow(1 - approachProgress, 3)
-                        let previewScale = 0.84 + 0.16 * easedApproachProgress
+                        // Let the incoming cover grow from a clearly smaller
+                        // size as it slides in, reaching the current cover's
+                        // exact scale when it arrives at the center.
+                        let previewScale = 0.92 + 0.08 * easedApproachProgress
                         let previewBlur = 3.5 * (1 - approachProgress)
                         let previewOpacity = 0.58 + 0.42 * approachProgress
                         ArtworkView(track: previewTrack, cornerRadius: 6)
@@ -380,7 +389,9 @@ struct MusicSheetScene: View {
                         // Scale after positioning so the transform is centered on
                         // the poster's on-screen bounds, not its layout origin.
                         .scaleEffect(
-                            swipeScale * (player.isPlaying && posterPulse && p > 0.5 ? 1.05 : 1),
+                            swipeScale
+                                * outgoingPosterScale
+                                * (player.isPlaying && posterPulse && p > 0.5 ? 1.05 : 1),
                             anchor: .center
                         )
                         .contentShape(Rectangle())
@@ -640,7 +651,8 @@ private struct MiniPlayerPanel: View {
             PlaybackScrubber(player: player, darkAppearance: darkAppearance)
                 .padding(.horizontal, 24)
 
-            TransportControls(player: player, compact: true, darkAppearance: darkAppearance)
+            TransportControls(player: player, compact: true, darkAppearance: darkAppearance,
+                              mutedSecondaryControls: true)
                 .padding(.horizontal, 22)
                 .padding(.top, 5)
 

@@ -60,10 +60,12 @@ struct TransportControls: View {
     @ObservedObject var player: AudioPlaybackManager
     var compact: Bool = false
     var darkAppearance: Bool = false
+    var mutedSecondaryControls: Bool = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            transportButton("arrow.up.arrow.down", active: player.shuffleEnabled, label: "Shuffle") {
+            transportButton("arrow.up.arrow.down", active: player.shuffleEnabled,
+                            mutedWhenInactive: mutedSecondaryControls, label: "Shuffle") {
                 player.shuffleEnabled.toggle()
             }
             Spacer(minLength: 8)
@@ -77,6 +79,7 @@ struct TransportControls: View {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: compact ? 40 : 48, weight: .semibold))
                     .contentTransition(.symbolEffect(.replace))
+                    .foregroundStyle(darkAppearance ? .white : .black)
                     .frame(width: compact ? 67 : 76, height: compact ? 59 : 66)
             }
             .animation(.snappy(duration: 0.12), value: player.isPlaying)
@@ -86,7 +89,8 @@ struct TransportControls: View {
                 player.next()
             }
             Spacer(minLength: 8)
-            transportButton("repeat", active: player.repeatEnabled, label: "Repeat") {
+            transportButton("repeat", active: player.repeatEnabled,
+                            mutedWhenInactive: mutedSecondaryControls, label: "Repeat") {
                 player.repeatEnabled.toggle()
             }
         }
@@ -97,6 +101,7 @@ struct TransportControls: View {
     private func transportButton(
         _ systemName: String,
         active: Bool = false,
+        mutedWhenInactive: Bool = false,
         label: String,
         size: CGFloat = 23,
         action: @escaping () -> Void
@@ -107,7 +112,9 @@ struct TransportControls: View {
                 .frame(width: 44, height: 54)
                 .foregroundStyle(active
                     ? Color(red: 0, green: 0.53, blue: 0.98)
-                    : (darkAppearance ? .white.opacity(size < 30 ? 0.78 : 1) : (size < 30 ? .black.opacity(0.62) : .black)))
+                    : (mutedWhenInactive
+                        ? (darkAppearance ? .white.opacity(0.58) : Color(red: 0.40, green: 0.40, blue: 0.42))
+                        : (darkAppearance ? .white.opacity(size < 30 ? 0.78 : 1) : (compact ? .black : (size < 30 ? .black.opacity(0.62) : .black)))))
         }
         .accessibilityLabel(label)
         .accessibilityAddTraits(active ? [.isSelected] : [])
