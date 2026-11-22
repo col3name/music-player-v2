@@ -1,6 +1,8 @@
 import AVFoundation
 import Combine
 import Foundation
+import MediaPlayer
+import UIKit
 
 enum ArtworkSlideDirection: Equatable {
     case next
@@ -23,6 +25,7 @@ final class AudioPlaybackManager: ObservableObject {
 
     private var audio: AVAudioPlayer?
     private var playbackRequestID = 0
+    private var remoteCommandsConfigured = false
 
     var duration: TimeInterval {
         audio?.duration ?? 202
@@ -37,7 +40,9 @@ final class AudioPlaybackManager: ObservableObject {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         #endif
+        configureRemoteCommands()
         loadAudio(startingAt: 0, for: track)
+        updateNowPlaying()
     }
 
     private func loadAudio(startingAt seconds: TimeInterval, for track: DemoTrack) {
@@ -62,6 +67,7 @@ final class AudioPlaybackManager: ObservableObject {
     func tick() {
         guard let audio else { return }
         elapsed = audio.currentTime
+        updateNowPlaying()
         if isPlaying && !audio.isPlaying {
             if repeatEnabled {
                 audio.currentTime = 0
@@ -69,7 +75,7 @@ final class AudioPlaybackManager: ObservableObject {
             } else {
                 isPlaying = false
                 elapsed = duration
-                syncLiveActivity(startIfNeeded: false)
+                updateNowPlaying()
             }
         }
     }
@@ -84,7 +90,7 @@ final class AudioPlaybackManager: ObservableObject {
             audio?.pause()
             isPlaying = false
             isPreparingPlayback = false
-            syncLiveActivity(startIfNeeded: false)
+            updateNowPlaying()
         } else {
             if elapsed >= duration - 0.1 { seek(to: 0) }
             guard let audio else { return }
@@ -94,7 +100,7 @@ final class AudioPlaybackManager: ObservableObject {
             let requestID = playbackRequestID
             isPlaying = true
             isPreparingPlayback = true
-            syncLiveActivity(startIfNeeded: true)
+            updateNowPlaying()
 
             Task { @MainActor in
                 let activated = await activateAudioSession()
@@ -102,7 +108,7 @@ final class AudioPlaybackManager: ObservableObject {
                 isPreparingPlayback = false
                 guard activated, audio.play() else {
                     isPlaying = false
-                    syncLiveActivity(startIfNeeded: false)
+                    updateNowPlaying()
                     return
                 }
             }
@@ -143,6 +149,7 @@ final class AudioPlaybackManager: ObservableObject {
         let time = min(max(fraction, 0), 1) * duration
         audio?.currentTime = time
         elapsed = time
+        updateNowPlaying()
     }
 
     func select(_ selected: DemoTrack, autoPlay: Bool = true, slideDirection: ArtworkSlideDirection? = nil) {
@@ -152,10 +159,11 @@ final class AudioPlaybackManager: ObservableObject {
         track = selected
         isPlaying = false
         loadAudio(startingAt: 0, for: selected)
+        updateNowPlaying()
         if autoPlay {
             togglePlayback()
         } else {
-            syncLiveActivity(startIfNeeded: false)
+            updateNowPlaying()
         }
     }
 
@@ -201,15 +209,51 @@ final class AudioPlaybackManager: ObservableObject {
         return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
-    private func syncLiveActivity(startIfNeeded: Bool) {
-        let currentTrack = track
-        let playbackIsActive = isPlaying
-        Task {
-            await MusicPlaybackActivityController.sync(
-                track: currentTrack,
-                isPlaying: playbackIsActive,
-                startIfNeeded: startIfNeeded
-            )
+    private func updateNowPlaying() {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: track.title,
+            MPMediaItemPropertyArtist: track.artist,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: audio?.currentTime ?? elapsed,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+        if let audio, audio.duration.isFinite, audio.duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = audio.duration
+        }
+        if let imageName = track.imageName, let image = UIImage(named: imageName) {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        let commands = MPRemoteCommandCenter.shared()
+        let index = DemoTrack.examples.firstIndex(of: track) ?? 0
+        commands.nextTrackCommand.isEnabled = index + 1 < DemoTrack.examples.count
+        commands.previousTrackCommand.isEnabled = index > 0
+    }
+
+    private func configureRemoteCommands() {
+        guard !remoteCommandsConfigured else { return }
+        remoteCommandsConfigured = true
+        let commands = MPRemoteCommandCenter.shared()
+        commands.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if !self.isPlaying { self.togglePlayback() }
+            }
+            return .success
+        }
+        commands.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isPlaying else { return }
+                self.togglePlayback()
+            }
+            return .success
+        }
+        commands.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.next() }
+            return .success
+        }
+        commands.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.selectPreviousTrack() }
+            return .success
         }
     }
 }

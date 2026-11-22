@@ -60,7 +60,7 @@ struct MusicSheetScene: View {
             let darkPoster = paletteIsDark(ambientColors)
             let gradientLightening: [CGFloat] = darkPoster
                 ? [0.02, 0.03, 0.04, 0.06, 0.08, 0.10]
-                : [0.18, 0.22, 0.28, 0.56, 0.76, 0.88]
+                : [0.18, 0.22, 0.28, 0.34, 0.38, 0.42]
             ZStack {
                 BaseSceneView(openSheet: {
                     withAnimation(heroAnimation) { isSheetVisible = true }
@@ -69,6 +69,10 @@ struct MusicSheetScene: View {
                 if isSheetVisible {
                     librarySheet(sceneHeight: geometry.size.height)
                         .frame(maxHeight: .infinity, alignment: .bottom)
+                        // The library's rounded card remains behind the player
+                        // during expansion; fade the entire sheet out with it.
+                        .opacity(1 - expansionProgress)
+                        .allowsHitTesting(expansionProgress < 0.98)
                         .transition(.move(edge: .bottom))
                 }
 
@@ -108,6 +112,7 @@ struct MusicSheetScene: View {
                         // of the selected artwork, so keep its controls dark.
                         darkAppearance: darkPoster && expansionProgress > 0.5
                     )
+                    .animation(.easeInOut(duration: 0.24), value: darkPoster && expansionProgress > 0.5)
                     .background {
                         // Reveal the scene-wide poster gradient through the
                         // controls area as the player expands.
@@ -153,6 +158,21 @@ struct MusicSheetScene: View {
             }
         }
         .sensoryFeedback(.selection, trigger: isExpanded)
+        .onOpenURL { url in
+            guard url.scheme == "musichero" else { return }
+            switch url.host {
+            case "play":
+                if !player.isPlaying { player.togglePlayback() }
+            case "pause":
+                if player.isPlaying { player.togglePlayback() }
+            case "previous":
+                player.previous()
+            case "next":
+                player.next()
+            default:
+                break
+            }
+        }
     }
 
     private func expand(initialVelocity: CGFloat = 0) {
@@ -266,10 +286,10 @@ struct MusicSheetScene: View {
             .opacity(expansionProgress)
             .allowsHitTesting(false)
         }
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 44,
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 44 * (1 - expansionProgress),
                                           bottomLeadingRadius: 0,
                                           bottomTrailingRadius: 0,
-                                          topTrailingRadius: 44))
+                                          topTrailingRadius: 44 * (1 - expansionProgress)))
     }
 
     private func heroElements(sceneSize: CGSize) -> some View {
@@ -373,7 +393,7 @@ struct MusicSheetScene: View {
                             .init(color: ambientColors[0].opacity(0.78), location: 0),
                             .init(color: ambientColors[1].opacity(0.72), location: 0.42),
                             .init(color: ambientColors[2].opacity(0.48), location: 0.68),
-                            .init(color: .white.opacity(0.16), location: 1)
+                            .init(color: ambientColors[0].opacity(0.16), location: 1)
                         ], startPoint: .top, endPoint: .bottom)
                             .frame(width: artworkFrame.width + 100, height: artworkFrame.height + 170)
                             .blur(radius: 46)
@@ -493,6 +513,7 @@ struct MusicSheetScene: View {
                 }
 
             }
+            .animation(.easeInOut(duration: 0.24), value: darkAppearance)
         }
     }
 

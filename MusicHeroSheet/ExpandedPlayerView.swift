@@ -163,12 +163,17 @@ struct ExpandedPlayerView: View {
             // expanded backdrop the richer, rosy color seen in the reference.
             let rose = Color(red: 0.88, green: 0.52, blue: 0.50)
 
+            // Keep the backdrop fully opaque all the way to the screen edges.
+            // Translucent gradient stops and their blur can reveal a pale layer
+            // underneath as white bands along the top and sides.
+            colors[2]
+
             // The backdrop always follows the current poster. It fades to white
             // below the track title so the poster tint fills the marked artwork area.
             LinearGradient(stops: [
-                .init(color: vividColors[0].blended(with: rose, fraction: 0.24).opacity(0.96), location: 0),
-                .init(color: vividColors[1].blended(with: rose, fraction: 0.28).opacity(0.92), location: 0.34),
-                .init(color: vividColors[2].blended(with: rose, fraction: 0.22).opacity(0.86), location: 0.56),
+                .init(color: vividColors[0].blended(with: rose, fraction: 0.24), location: 0),
+                .init(color: vividColors[1].blended(with: rose, fraction: 0.28), location: 0.34),
+                .init(color: vividColors[2].blended(with: rose, fraction: 0.22), location: 0.56),
                 .init(color: Color(red: 0.98, green: 0.88, blue: 0.87).opacity(0.88), location: 0.68),
                 .init(color: .white, location: 0.76),
                 .init(color: .white, location: 1)
@@ -201,6 +206,11 @@ struct ExpandedPlayerView: View {
                 .opacity(ambientModeEnabled ? 0.35 : 0)
                 .animation(.easeInOut(duration: 0.45), value: ambientModeEnabled)
         }
+        // Extend an opaque poster-tinted base beneath every blurred layer so
+        // the rounded white sheet underneath cannot show through at the top.
+        .background(ambientColors.last ?? Color(red: 0.12, green: 0.09, blue: 0.09))
+        .frame(width: size.width, height: size.height)
+        .clipped()
         .ignoresSafeArea()
     }
 

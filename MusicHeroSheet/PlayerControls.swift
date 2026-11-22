@@ -71,7 +71,7 @@ struct TransportControls: View {
             Spacer(minLength: 8)
             transportButton("backward.fill", label: "Previous track", size: compact ? 32 : 35) {
                 player.previous()
-            }
+            }.buttonStyle(TrackSkipButtonStyle())
             Spacer(minLength: 8)
             Button {
                 player.togglePlayback()
@@ -87,7 +87,7 @@ struct TransportControls: View {
             Spacer(minLength: 8)
             transportButton("forward.fill", label: "Next track", size: compact ? 32 : 35) {
                 player.next()
-            }
+            }.buttonStyle(TrackSkipButtonStyle())
             Spacer(minLength: 8)
             transportButton("repeat", active: player.repeatEnabled,
                             mutedWhenInactive: mutedSecondaryControls, label: "Repeat") {
@@ -118,6 +118,15 @@ struct TransportControls: View {
         }
         .accessibilityLabel(label)
         .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+}
+
+private struct TrackSkipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.82 : 1)
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .animation(.spring(response: 0.18, dampingFraction: 0.55), value: configuration.isPressed)
     }
 }
 

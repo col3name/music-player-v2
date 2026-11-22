@@ -106,12 +106,10 @@
 				300000000000000000000002 /* Sources */,
 				300000000000000000000001 /* Frameworks */,
 				300000000000000000000003 /* Resources */,
-				300000000000000000000004 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				900000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = MusicHeroSheet;
 			productName = MusicHeroSheet;
@@ -217,8 +215,6 @@
 				100000000000000000000005 /* PlayerControls.swift in Sources */,
 				100000000000000000000006 /* MusicSheetScene.swift in Sources */,
 				100000000000000000000007 /* ExpandedPlayerView.swift in Sources */,
-				100000000000000000000010 /* MusicPlaybackActivityAttributes.swift in App Sources */,
-				100000000000000000000011 /* MusicPlaybackActivityController.swift in App Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,7 +315,6 @@
 				DEVELOPMENT_TEAM = ZV2CVZCS2G;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MusicHeroSheet/Info.plist;
-				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Music Hero Sheet";
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -346,7 +341,6 @@
 				DEVELOPMENT_TEAM = ZV2CVZCS2G;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MusicHeroSheet/Info.plist;
-				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Music Hero Sheet";
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
