@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlaybackScrubber: View {
     @ObservedObject var player: AudioPlaybackManager
+    var darkAppearance: Bool = false
     @State private var draggingValue: Double?
 
     private var presentedValue: Double { draggingValue ?? player.progress }
@@ -12,10 +13,10 @@ struct PlaybackScrubber: View {
                 let width = proxy.size.width
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(Color.black.opacity(0.08))
+                        .fill(darkAppearance ? Color.white.opacity(0.28) : Color.black.opacity(0.16))
                         .frame(height: 6)
                     Capsule(style: .continuous)
-                        .fill(Color.black)
+                        .fill(darkAppearance ? Color.white : Color.black)
                         .frame(width: max(11, width * presentedValue), height: 6)
                 }
                 .frame(height: 24)
@@ -49,7 +50,7 @@ struct PlaybackScrubber: View {
                 Text(AudioPlaybackManager.timeString(max(player.duration - presentedValue * player.duration, 0)))
             }
             .font(.system(size: 12, weight: .medium, design: .rounded))
-            .foregroundStyle(.gray)
+            .foregroundStyle(darkAppearance ? .white.opacity(0.84) : .black.opacity(0.68))
             .monospacedDigit()
         }
     }
@@ -58,6 +59,7 @@ struct PlaybackScrubber: View {
 struct TransportControls: View {
     @ObservedObject var player: AudioPlaybackManager
     var compact: Bool = false
+    var darkAppearance: Bool = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
@@ -88,7 +90,7 @@ struct TransportControls: View {
                 player.repeatEnabled.toggle()
             }
         }
-        .foregroundStyle(.black)
+        .foregroundStyle(darkAppearance ? .white : .black)
         .buttonStyle(.plain)
     }
 
@@ -103,7 +105,9 @@ struct TransportControls: View {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .semibold))
                 .frame(width: 44, height: 54)
-                .foregroundStyle(active ? Color(red: 0, green: 0.53, blue: 0.98) : (size < 30 ? .gray : .black))
+                .foregroundStyle(active
+                    ? Color(red: 0, green: 0.53, blue: 0.98)
+                    : (darkAppearance ? .white.opacity(size < 30 ? 0.78 : 1) : (size < 30 ? .black.opacity(0.62) : .black)))
         }
         .accessibilityLabel(label)
         .accessibilityAddTraits(active ? [.isSelected] : [])

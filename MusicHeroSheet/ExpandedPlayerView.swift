@@ -77,6 +77,10 @@ struct ExpandedPlayerView: View {
 
                     ArtworkView(track: player.track, cornerRadius: 6)
                         .frame(width: coverSize, height: coverSize)
+                        // Keep vertical sheet dismissal on the artwork surface.
+                        // A full-screen drag recognizer competes with the scrubber
+                        // and transport buttons, making taps feel unreliable.
+                        .simultaneousGesture(expandedDragGesture(in: geometry))
                         .opacity(0)
                         .background {
                             GeometryReader { proxy in
@@ -109,37 +113,6 @@ struct ExpandedPlayerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // Keep the sheet drag recognizer simultaneous with child controls.
-            // Attaching it as an exclusive parent gesture can swallow button taps.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            dragStartProgress = progress
-                        }
-                        let travelDistance = max(1, geometry.size.height * 0.72)
-                        let next = dragStartProgress - value.translation.height / travelDistance
-                        var transaction = Transaction()
-                        transaction.animation = nil
-                        withTransaction(transaction) { progress = min(1, max(0, next)) }
-                    }
-                    .onEnded { value in
-                        isDragging = false
-                        let projectedVelocity = (value.predictedEndTranslation.height - value.translation.height) * 5
-                        let travelDistance = max(1, geometry.size.height * 0.72)
-                        let projectedProgress = dragStartProgress - value.predictedEndTranslation.height / travelDistance
-                        // Snap closed once the downward drag has crossed one
-                        // third of the collapse distance, even if released slowly.
-                        let collapseProgress = max(0, min(1,
-                            value.translation.height / travelDistance
-                        ))
-                        let target: CGFloat = collapseProgress >= (1.0 / 3.0)
-                            || projectedProgress <= 0.5 ? 0 : 1
-                        let velocity = min(5, max(-5, -projectedVelocity / travelDistance))
-                        settle(target, velocity)
-                    }
-            )
         }
         .ignoresSafeArea()
         .onAppear { updateAmbientColors() }
@@ -153,6 +126,31 @@ struct ExpandedPlayerView: View {
                 ambientDrift.toggle()
             }
         }
+    }
+
+    private func expandedDragGesture(in geometry: GeometryProxy) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                if !isDragging {
+                    isDragging = true
+                    dragStartProgress = progress
+                }
+                let travelDistance = max(1, geometry.size.height * 0.72)
+                let next = dragStartProgress - value.translation.height / travelDistance
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) { progress = min(1, max(0, next)) }
+            }
+            .onEnded { value in
+                isDragging = false
+                let projectedVelocity = (value.predictedEndTranslation.height - value.translation.height) * 5
+                let travelDistance = max(1, geometry.size.height * 0.72)
+                let projectedProgress = dragStartProgress - value.predictedEndTranslation.height / travelDistance
+                let collapseProgress = max(0, min(1, value.translation.height / travelDistance))
+                let target: CGFloat = collapseProgress >= (1.0 / 3.0) || projectedProgress <= 0.5 ? 0 : 1
+                let velocity = min(5, max(-5, -projectedVelocity / travelDistance))
+                settle(target, velocity)
+            }
     }
 
     private func expandedBackground(size: CGSize) -> some View {
@@ -290,11 +288,13 @@ enum PosterColorPalette {
         }
 
         var buckets: [Int: Bucket] = [:]
+        var totalBrightness = 0.0
         for index in stride(from: 0, to: pixels.count, by: 4) {
             let r = Int(pixels[index])
             let g = Int(pixels[index + 1])
             let b = Int(pixels[index + 2])
             let brightness = max(r, g, b)
+            totalBrightness += Double(brightness) / 255.0
             guard brightness > 24, brightness < 248 else { continue }
 
             let key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)
@@ -321,8 +321,18 @@ enum PosterColorPalette {
                   blue: Double(bucket.blue) / Double(bucket.count * 255),
                   opacity: 1)
         })
-        return selected.count == 3 ? selected : fallback(for: track.id)
+        if selected.count == 3 {
+            return selected
+        }
+        let averageBrightness = totalBrightness / Double(width * height)
+        return averageBrightness < 0.24 ? darkFallback : fallback(for: track.id)
     }
+
+    private static let darkFallback: [Color] = [
+        Color(red: 0.13, green: 0.14, blue: 0.15),
+        Color(red: 0.20, green: 0.20, blue: 0.21),
+        Color(red: 0.09, green: 0.10, blue: 0.11)
+    ]
 
     private static func fallback(for id: Int) -> [Color] {
         let palettes: [[Color]] = [

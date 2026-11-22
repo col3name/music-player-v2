@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 private enum ArtworkGestureAxis: Equatable {
     case horizontal
@@ -56,6 +57,10 @@ struct MusicSheetScene: View {
     var body: some View {
         GeometryReader { geometry in
             let ambientColors = currentPosterAmbientColors
+            let darkPoster = paletteIsDark(ambientColors)
+            let gradientLightening: [CGFloat] = darkPoster
+                ? [0.02, 0.03, 0.04, 0.06, 0.08, 0.10]
+                : [0.18, 0.22, 0.28, 0.56, 0.76, 0.88]
             ZStack {
                 BaseSceneView(openSheet: {
                     withAnimation(heroAnimation) { isSheetVisible = true }
@@ -68,12 +73,14 @@ struct MusicSheetScene: View {
                 }
 
                 LinearGradient(stops: [
-                    .init(color: ambientColors[0], location: 0),
-                    .init(color: ambientColors[1], location: 0.30),
-                    .init(color: ambientColors[2], location: 0.56),
-                    .init(color: ambientColors[1], location: 0.79),
-                    .init(color: ambientColors[0], location: 1)
+                    .init(color: blended(ambientColors[0], toward: .white, amount: gradientLightening[0]), location: 0),
+                    .init(color: blended(ambientColors[1], toward: .white, amount: gradientLightening[1]), location: 0.30),
+                    .init(color: blended(ambientColors[2], toward: .white, amount: gradientLightening[2]), location: 0.56),
+                    .init(color: blended(ambientColors[2], toward: .white, amount: gradientLightening[3]), location: 0.73),
+                    .init(color: blended(ambientColors[1], toward: .white, amount: gradientLightening[4]), location: 0.88),
+                    .init(color: blended(ambientColors[0], toward: .white, amount: gradientLightening[5]), location: 1)
                 ], startPoint: .top, endPoint: .bottom)
+                .blur(radius: 16)
                 .ignoresSafeArea()
                 .opacity(expansionProgress)
                 .allowsHitTesting(false)
@@ -96,7 +103,10 @@ struct MusicSheetScene: View {
                         progress: $expansionProgress,
                         isTopRowDragging: $isTopRowDragging,
                         settle: settleExpansion,
-                        travelDistance: geometry.size.height * 0.72
+                        travelDistance: geometry.size.height * 0.72,
+                        // The collapsed sheet has a white surface regardless
+                        // of the selected artwork, so keep its controls dark.
+                        darkAppearance: darkPoster && expansionProgress > 0.5
                     )
                     .background {
                         // Reveal the scene-wide poster gradient through the
@@ -150,6 +160,35 @@ struct MusicSheetScene: View {
         withAnimation(.easeInOut(duration: 0.55)) {
             posterAmbientColors = PosterColorPalette.colors(for: player.track)
         }
+    }
+
+    private func blended(_ color: Color, toward target: Color, amount: CGFloat) -> Color {
+        let source = UIColor(color)
+        let destination = UIColor(target)
+        var sr: CGFloat = 0, sg: CGFloat = 0, sb: CGFloat = 0, sa: CGFloat = 0
+        var dr: CGFloat = 0, dg: CGFloat = 0, db: CGFloat = 0, da: CGFloat = 0
+        guard source.getRed(&sr, green: &sg, blue: &sb, alpha: &sa),
+              destination.getRed(&dr, green: &dg, blue: &db, alpha: &da) else {
+            return color
+        }
+        let t = min(1, max(0, amount))
+        return Color(
+            red: Double(sr + (dr - sr) * t),
+            green: Double(sg + (dg - sg) * t),
+            blue: Double(sb + (db - sb) * t),
+            opacity: Double(sa + (da - sa) * t)
+        )
+    }
+
+    private func paletteIsDark(_ colors: [Color]) -> Bool {
+        let luminances = colors.map { color -> CGFloat in
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+                return 1
+            }
+            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        }
+        return luminances.reduce(0, +) / CGFloat(max(1, luminances.count)) < 0.32
     }
 
     private func settleExpansion(_ target: CGFloat, _ velocity: CGFloat) {
@@ -224,12 +263,12 @@ struct MusicSheetScene: View {
         GeometryReader { _ in
             // Leave room for the swipe scale while keeping the expanded poster
             // visibly 20 pt smaller at rest. Layout and controls stay put.
-            let coverSize = min(sceneSize.width - 48, 355) - 40
+            let coverSize = min(sceneSize.width - 48, 355) - 60
             let sourceArtwork = miniArtworkFrame.width > 0
                 ? miniArtworkFrame
                 : CGRect(x: 16, y: sceneSize.height - 260, width: 45, height: 45)
             let destinationArtwork = fullArtworkFrame.width > 0
-                ? fullArtworkFrame.insetBy(dx: 20, dy: 20).offsetBy(dx: 0, dy: -25)
+                ? fullArtworkFrame.insetBy(dx: 30, dy: 30).offsetBy(dx: 0, dy: -25)
                 : CGRect(x: (sceneSize.width - coverSize) / 2,
                          y: sceneSize.height * 0.22 - 25,
                          width: coverSize, height: coverSize)
@@ -258,6 +297,8 @@ struct MusicSheetScene: View {
             let ambientColors = posterAmbientColors.isEmpty
                 ? [Color(red: 0.34, green: 0.22, blue: 0.20), Color(red: 0.70, green: 0.44, blue: 0.35), Color(red: 0.24, green: 0.19, blue: 0.18)]
                 : posterAmbientColors
+            let darkPoster = paletteIsDark(ambientColors)
+            let darkAppearance = darkPoster && p > 0.5
             let trackIndex = DemoTrack.examples.firstIndex(of: player.track) ?? 0
             let draggedDirection: ArtworkSlideDirection? = artworkDragX < 0 ? .next : (artworkDragX > 0 ? .previous : nil)
             let previewTrack: DemoTrack? = {
@@ -416,11 +457,11 @@ struct MusicSheetScene: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(player.track.title)
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(darkAppearance ? .white : .black)
                             .lineLimit(1)
                         Text(player.track.artist)
                             .font(.system(size: 15))
-                            .foregroundStyle(.gray)
+                            .foregroundStyle(darkAppearance ? .white.opacity(0.78) : .black.opacity(0.72))
                             .lineLimit(1)
                     }
                     .frame(width: titleFrame.width, height: titleFrame.height, alignment: .leading)
@@ -515,6 +556,7 @@ private struct MiniPlayerPanel: View {
     @Binding var isTopRowDragging: Bool
     let settle: (CGFloat, CGFloat) -> Void
     let travelDistance: CGFloat
+    let darkAppearance: Bool
     @State private var dragStartProgress: CGFloat = 0
     @State private var isDragging = false
 
@@ -540,11 +582,11 @@ private struct MiniPlayerPanel: View {
                     Text(player.track.title)
                         .font(.system(size: 17, weight: .semibold))
                         .lineLimit(1)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(darkAppearance ? .white : .black)
                     Text(player.track.artist)
                         .font(.system(size: 15))
                         .lineLimit(1)
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(darkAppearance ? .white.opacity(0.78) : .black.opacity(0.72))
                 }
                 .background {
                     GeometryReader { proxy in
@@ -558,7 +600,7 @@ private struct MiniPlayerPanel: View {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 23, weight: .regular))
                         .frame(width: 44, height: 48)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(darkAppearance ? .white : .black)
                 }
                 .accessibilityLabel("Share current track")
             }
@@ -595,10 +637,10 @@ private struct MiniPlayerPanel: View {
                     }
             )
 
-            PlaybackScrubber(player: player)
+            PlaybackScrubber(player: player, darkAppearance: darkAppearance)
                 .padding(.horizontal, 24)
 
-            TransportControls(player: player, compact: true)
+            TransportControls(player: player, compact: true, darkAppearance: darkAppearance)
                 .padding(.horizontal, 22)
                 .padding(.top, 5)
 
