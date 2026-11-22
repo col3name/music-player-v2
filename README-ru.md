@@ -6,9 +6,9 @@ SwiftUI-демо плейлиста песен в стиле Telegram и пол�
 
 ## До и после
 
-| До | После |
-| --- | --- |
-| ![До](docs/media/before.png) | ![После](docs/media/after.png) |
+| До                           | После |
+|------------------------------| --- |
+| ![До](docs/media/before.jpg) | ![После](docs/media/after.jpg) |
 
 ## Возможности
 
