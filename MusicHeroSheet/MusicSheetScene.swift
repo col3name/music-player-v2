@@ -37,6 +37,7 @@ struct MusicSheetScene: View {
     @State private var artworkDragX: CGFloat = 0
     @State private var isArtworkSwipeSettling = false
     @State private var posterAmbientColors: [Color] = []
+    @State private var posterPulse = false
 
     private var isExpanded: Bool { expansionProgress > 0.5 }
 
@@ -54,6 +55,7 @@ struct MusicSheetScene: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let ambientColors = currentPosterAmbientColors
             ZStack {
                 BaseSceneView(openSheet: {
                     withAnimation(heroAnimation) { isSheetVisible = true }
@@ -66,11 +68,11 @@ struct MusicSheetScene: View {
                 }
 
                 LinearGradient(stops: [
-                    .init(color: Color(red: 0.93, green: 0.77, blue: 0.77), location: 0),
-                    .init(color: Color(red: 0.95, green: 0.79, blue: 0.74), location: 0.34),
-                    .init(color: Color(red: 0.91, green: 0.77, blue: 0.71), location: 0.58),
-                    .init(color: .white.opacity(0.88), location: 0.76),
-                    .init(color: .white, location: 1)
+                    .init(color: ambientColors[0], location: 0),
+                    .init(color: ambientColors[1], location: 0.30),
+                    .init(color: ambientColors[2], location: 0.56),
+                    .init(color: ambientColors[1], location: 0.79),
+                    .init(color: ambientColors[0], location: 1)
                 ], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
                 .opacity(expansionProgress)
@@ -96,7 +98,11 @@ struct MusicSheetScene: View {
                         settle: settleExpansion,
                         travelDistance: geometry.size.height * 0.72
                     )
-                    .background(.white)
+                    .background {
+                        // Reveal the scene-wide poster gradient through the
+                        // controls area as the player expands.
+                        Color.white.opacity(1 - expansionProgress)
+                    }
                     .frame(maxHeight: .infinity, alignment: .bottom)
                     .allowsHitTesting(true)
                     .zIndex(2)
@@ -117,6 +123,22 @@ struct MusicSheetScene: View {
         }
         .onAppear { updatePosterAmbientColors() }
         .onChange(of: player.track.id) { _, _ in updatePosterAmbientColors() }
+        .onChange(of: player.isPlaying) { _, isPlaying in
+            guard !reduceMotion else {
+                posterPulse = false
+                return
+            }
+            if isPlaying {
+                // 0.15 s out + 0.15 s back = 0.3 s per full pulse cycle.
+                withAnimation(.easeInOut(duration: 0.15).repeatForever(autoreverses: true)) {
+                    posterPulse = true
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.35)) {
+                    posterPulse = false
+                }
+            }
+        }
         .sensoryFeedback(.selection, trigger: isExpanded)
     }
 
@@ -200,12 +222,14 @@ struct MusicSheetScene: View {
 
     private func heroElements(sceneSize: CGSize) -> some View {
         GeometryReader { _ in
-            let coverSize = min(sceneSize.width - 48, 355)
+            // Leave room for the swipe scale while keeping the expanded poster
+            // visibly 20 pt smaller at rest. Layout and controls stay put.
+            let coverSize = min(sceneSize.width - 48, 355) - 40
             let sourceArtwork = miniArtworkFrame.width > 0
                 ? miniArtworkFrame
                 : CGRect(x: 16, y: sceneSize.height - 260, width: 45, height: 45)
             let destinationArtwork = fullArtworkFrame.width > 0
-                ? fullArtworkFrame.offsetBy(dx: 0, dy: -25)
+                ? fullArtworkFrame.insetBy(dx: 20, dy: 20).offsetBy(dx: 0, dy: -25)
                 : CGRect(x: (sceneSize.width - coverSize) / 2,
                          y: sceneSize.height * 0.22 - 25,
                          width: coverSize, height: coverSize)
@@ -228,6 +252,9 @@ struct MusicSheetScene: View {
                 height: titleSource.height
             )
             let p = expansionProgress
+            // Add a small scale transform on top of the frame interpolation so
+            // the poster visibly grows with the finger during an upward drag.
+            let swipeScale = 1 + 0.06 * p
             let ambientColors = posterAmbientColors.isEmpty
                 ? [Color(red: 0.34, green: 0.22, blue: 0.20), Color(red: 0.70, green: 0.44, blue: 0.35), Color(red: 0.24, green: 0.19, blue: 0.18)]
                 : posterAmbientColors
@@ -266,7 +293,8 @@ struct MusicSheetScene: View {
                         let approachProgress = min(1, max(0,
                             1 - abs(previewCenterX - artworkFrame.midX) / posterTravel
                         ))
-                        let previewScale = 0.84 + 0.16 * approachProgress
+                        let easedApproachProgress = 1 - pow(1 - approachProgress, 3)
+                        let previewScale = 0.84 + 0.16 * easedApproachProgress
                         let previewBlur = 3.5 * (1 - approachProgress)
                         let previewOpacity = 0.58 + 0.42 * approachProgress
                         ArtworkView(track: previewTrack, cornerRadius: 6)
@@ -275,6 +303,7 @@ struct MusicSheetScene: View {
                             .blur(radius: previewBlur)
                             .opacity(previewOpacity)
                             .position(x: previewCenterX, y: artworkFrame.midY)
+                            .zIndex(2)
                             .allowsHitTesting(false)
                     }
                     ZStack {
@@ -306,6 +335,13 @@ struct MusicSheetScene: View {
                     }
                         .frame(width: artworkFrame.width, height: artworkFrame.height)
                         .position(x: artworkFrame.midX + resistedDrag, y: artworkFrame.midY)
+                        .zIndex(1)
+                        // Scale after positioning so the transform is centered on
+                        // the poster's on-screen bounds, not its layout origin.
+                        .scaleEffect(
+                            swipeScale * (player.isPlaying && posterPulse && p > 0.5 ? 1.05 : 1),
+                            anchor: .center
+                        )
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 18)

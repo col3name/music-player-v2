@@ -167,6 +167,15 @@ final class AudioPlaybackManager: ObservableObject {
     }
 
     func previous() {
+        // Match a conventional music player: a quick tap near the start skips
+        // back, while a tap later in the track restarts the current song.
+        if elapsed > 3 {
+            seek(to: 0)
+            if isPlaying {
+                audio?.play()
+            }
+            return
+        }
         selectPreviousTrack()
     }
 
