@@ -16,6 +16,12 @@
 		100000000000000000000007 /* ExpandedPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* ExpandedPlayerView.swift */; };
 		100000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Assets.xcassets */; };
 		100000000000000000000009 /* Audio in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* Audio */; };
+		100000000000000000000010 /* MusicPlaybackActivityAttributes.swift in App Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* MusicPlaybackActivityAttributes.swift */; };
+		100000000000000000000011 /* MusicPlaybackActivityController.swift in App Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* MusicPlaybackActivityController.swift */; };
+		100000000000000000000012 /* MusicPlaybackActivityAttributes.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* MusicPlaybackActivityAttributes.swift */; };
+		100000000000000000000013 /* MusicPlaybackLiveActivityWidget.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* MusicPlaybackLiveActivityWidget.swift */; };
+		100000000000000000000014 /* Assets.xcassets in Widget Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Assets.xcassets */; };
+		100000000000000000000015 /* MusicHeroSheetWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* MusicHeroSheetWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +35,10 @@
 		200000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000009 /* Audio */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Audio; sourceTree = "<group>"; };
 		200000000000000000000010 /* MusicHeroSheet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MusicHeroSheet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000011 /* MusicPlaybackActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPlaybackActivityAttributes.swift; sourceTree = "<group>"; };
+		200000000000000000000012 /* MusicPlaybackActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPlaybackActivityController.swift; sourceTree = "<group>"; };
+		200000000000000000000013 /* MusicHeroSheetWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = MusicHeroSheetWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000014 /* MusicPlaybackLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPlaybackLiveActivityWidget.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -46,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				400000000000000000000002 /* MusicHeroSheet */,
+				400000000000000000000005 /* MusicHeroSheetWidget */,
 				400000000000000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -62,6 +73,8 @@
 				200000000000000000000007 /* ExpandedPlayerView.swift */,
 				200000000000000000000008 /* Assets.xcassets */,
 				200000000000000000000009 /* Audio */,
+				200000000000000000000011 /* MusicPlaybackActivityAttributes.swift */,
+				200000000000000000000012 /* MusicPlaybackActivityController.swift */,
 			);
 			path = MusicHeroSheet;
 			sourceTree = "<group>";
@@ -70,8 +83,17 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000010 /* MusicHeroSheet.app */,
+				200000000000000000000013 /* MusicHeroSheetWidget.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		400000000000000000000005 /* MusicHeroSheetWidget */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000014 /* MusicPlaybackLiveActivityWidget.swift */,
+			);
+			path = MusicHeroSheetWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -84,15 +106,32 @@
 				300000000000000000000002 /* Sources */,
 				300000000000000000000001 /* Frameworks */,
 				300000000000000000000003 /* Resources */,
+				300000000000000000000004 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				900000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = MusicHeroSheet;
 			productName = MusicHeroSheet;
 			productReference = 200000000000000000000010 /* MusicHeroSheet.app */;
 			productType = "com.apple.product-type.application";
+		};
+		500000000000000000000002 /* MusicHeroSheetWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 600000000000000000000003 /* Build configuration list for PBXNativeTarget "MusicHeroSheetWidget" */;
+			buildPhases = (
+				300000000000000000000005 /* Widget Sources */,
+				300000000000000000000006 /* Widget Frameworks */,
+				300000000000000000000007 /* Widget Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = MusicHeroSheetWidget;
+			productName = MusicHeroSheetWidget;
+			productReference = 200000000000000000000013 /* MusicHeroSheetWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -105,6 +144,9 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					500000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					500000000000000000000002 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 				};
@@ -123,6 +165,7 @@
 			projectRoot = "";
 			targets = (
 				500000000000000000000001 /* MusicHeroSheet */,
+				500000000000000000000002 /* MusicHeroSheetWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -139,6 +182,29 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		300000000000000000000004 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			 dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				100000000000000000000015 /* MusicHeroSheetWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		300000000000000000000006 /* Widget Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		300000000000000000000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -151,10 +217,53 @@
 				100000000000000000000005 /* PlayerControls.swift in Sources */,
 				100000000000000000000006 /* MusicSheetScene.swift in Sources */,
 				100000000000000000000007 /* ExpandedPlayerView.swift in Sources */,
+				100000000000000000000010 /* MusicPlaybackActivityAttributes.swift in App Sources */,
+				100000000000000000000011 /* MusicPlaybackActivityController.swift in App Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		300000000000000000000005 /* Widget Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000012 /* MusicPlaybackActivityAttributes.swift in Widget Sources */,
+				100000000000000000000013 /* MusicPlaybackLiveActivityWidget.swift in Widget Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		300000000000000000000007 /* Widget Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000014 /* Assets.xcassets in Widget Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000000000000000000001 /* Widget target proxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 700000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000002;
+			remoteInfo = MusicHeroSheetWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		900000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 500000000000000000000002 /* MusicHeroSheetWidget */;
+			targetProxy = A00000000000000000000001 /* Widget target proxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		800000000000000000000001 /* Debug */ = {
@@ -208,7 +317,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZV2CVZCS2G;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MusicHeroSheet/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Music Hero Sheet";
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -233,7 +344,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZV2CVZCS2G;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MusicHeroSheet/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Music Hero Sheet";
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -246,6 +359,46 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		800000000000000000000005 /* Widget Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZV2CVZCS2G;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MusicHeroSheetWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.example.MusicHeroSheet.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		800000000000000000000006 /* Widget Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZV2CVZCS2G;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MusicHeroSheetWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.example.MusicHeroSheet.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -268,6 +421,15 @@
 			buildConfigurations = (
 				800000000000000000000003 /* Debug */,
 				800000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		600000000000000000000003 /* Build configuration list for PBXNativeTarget "MusicHeroSheetWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				800000000000000000000005 /* Widget Debug */,
+				800000000000000000000006 /* Widget Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -69,6 +69,7 @@ final class AudioPlaybackManager: ObservableObject {
             } else {
                 isPlaying = false
                 elapsed = duration
+                syncLiveActivity(startIfNeeded: false)
             }
         }
     }
@@ -83,6 +84,7 @@ final class AudioPlaybackManager: ObservableObject {
             audio?.pause()
             isPlaying = false
             isPreparingPlayback = false
+            syncLiveActivity(startIfNeeded: false)
         } else {
             if elapsed >= duration - 0.1 { seek(to: 0) }
             guard let audio else { return }
@@ -92,6 +94,7 @@ final class AudioPlaybackManager: ObservableObject {
             let requestID = playbackRequestID
             isPlaying = true
             isPreparingPlayback = true
+            syncLiveActivity(startIfNeeded: true)
 
             Task { @MainActor in
                 let activated = await activateAudioSession()
@@ -99,6 +102,7 @@ final class AudioPlaybackManager: ObservableObject {
                 isPreparingPlayback = false
                 guard activated, audio.play() else {
                     isPlaying = false
+                    syncLiveActivity(startIfNeeded: false)
                     return
                 }
             }
@@ -148,7 +152,11 @@ final class AudioPlaybackManager: ObservableObject {
         track = selected
         isPlaying = false
         loadAudio(startingAt: 0, for: selected)
-        if autoPlay { togglePlayback() }
+        if autoPlay {
+            togglePlayback()
+        } else {
+            syncLiveActivity(startIfNeeded: false)
+        }
     }
 
     func next() {
@@ -191,5 +199,17 @@ final class AudioPlaybackManager: ObservableObject {
     static func timeString(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.isFinite ? seconds : 0))
         return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    private func syncLiveActivity(startIfNeeded: Bool) {
+        let currentTrack = track
+        let playbackIsActive = isPlaying
+        Task {
+            await MusicPlaybackActivityController.sync(
+                track: currentTrack,
+                isPlaying: playbackIsActive,
+                startIfNeeded: startIfNeeded
+            )
+        }
     }
 }

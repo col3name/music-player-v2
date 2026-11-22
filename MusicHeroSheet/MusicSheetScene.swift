@@ -142,8 +142,8 @@ struct MusicSheetScene: View {
                 return
             }
             if isPlaying {
-                // 0.15 s out + 0.15 s back = 0.3 s per full pulse cycle.
-                withAnimation(.easeInOut(duration: 0.15).repeatForever(autoreverses: true)) {
+                // A subtle 2 pt expansion and return take 400 ms total.
+                withAnimation(.easeInOut(duration: 0.2).repeatForever(autoreverses: true)) {
                     posterPulse = true
                 }
             } else {
@@ -256,6 +256,16 @@ struct MusicSheetScene: View {
         }
         .frame(height: sceneHeight - 46)
         .background(Color(red: 0.944, green: 0.945, blue: 0.962))
+        .overlay(alignment: .bottom) {
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0),
+                .init(color: currentPosterAmbientColors[1].opacity(0.72), location: 0.48),
+                .init(color: currentPosterAmbientColors[2], location: 1)
+            ], startPoint: .top, endPoint: .bottom)
+            .frame(height: 190)
+            .opacity(expansionProgress)
+            .allowsHitTesting(false)
+        }
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 44,
                                           bottomLeadingRadius: 0,
                                           bottomTrailingRadius: 0,
@@ -391,7 +401,9 @@ struct MusicSheetScene: View {
                         .scaleEffect(
                             swipeScale
                                 * outgoingPosterScale
-                                * (player.isPlaying && posterPulse && p > 0.5 ? 1.05 : 1),
+                                * (player.isPlaying && posterPulse && p > 0.5
+                                   ? 1 + 2 / max(1, min(artworkFrame.width, artworkFrame.height))
+                                   : 1),
                             anchor: .center
                         )
                         .contentShape(Rectangle())
