@@ -226,8 +226,8 @@ struct MusicSheetScene: View {
                 .fill(Color.black.opacity(0.09))
                 .frame(width: 36, height: 5)
                 .frame(maxWidth: .infinity)
-                .frame(height: 24, alignment: .top)
-                .padding(.top, 4)
+                .frame(height: 18, alignment: .top)
+                .padding(.top, 2)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 12).onEnded { value in
@@ -239,29 +239,18 @@ struct MusicSheetScene: View {
                 .accessibilityLabel("Drag down to dismiss music library")
 
             ZStack {
-                Text("Pavel’s Playlist")
-                    .font(.system(size: 19, weight: .semibold))
+                Text("Pavel's Playlist")
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.black)
                     .lineLimit(1)
 
                 HStack {
-                    Button {
-                        withAnimation(heroAnimation) { isSheetVisible = false }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(.black)
-                            .frame(width: 48, height: 48)
-                            .background(.white.opacity(0.82), in: Circle())
-                            .overlay(Circle().stroke(.white, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close playlist")
+                    playlistCloseButton
 
                     Spacer(minLength: 0)
                 }
             }
-            .frame(height: 60)
+            .frame(height: 36)
             .padding(.horizontal, 20)
 
             ScrollView(.vertical) {
@@ -279,14 +268,7 @@ struct MusicSheetScene: View {
                             track: track,
                             selected: selected,
                             isPlaying: selected && player.isPlaying,
-                            selectAction: { player.select(track) },
-                            playAction: {
-                                if selected {
-                                    player.togglePlayback()
-                                } else {
-                                    player.select(track, autoPlay: true)
-                                }
-                            }
+                            selectAction: { player.select(track) }
                         )
                         if track.id != DemoTrack.examples.last?.id {
                             Divider()
@@ -297,7 +279,7 @@ struct MusicSheetScene: View {
                 }
                 .padding(.vertical, 1)
                 .background(.white, in: RoundedRectangle(cornerRadius: 29, style: .continuous))
-                .padding(.horizontal, 15)
+                .padding(.horizontal, 14)
                 .padding(.top, 0)
                 // The list scrolls behind the fixed mini-player. Keep enough
                 // trailing content inset for the final row to clear its controls.
@@ -335,6 +317,7 @@ struct MusicSheetScene: View {
                         }
                     }
             )
+            .padding(.top, 22)
         }
         .frame(height: sceneHeight - 46)
         .background(Color(red: 0.944, green: 0.945, blue: 0.962))
@@ -352,6 +335,39 @@ struct MusicSheetScene: View {
                                           bottomLeadingRadius: 0,
                                           bottomTrailingRadius: 0,
                                           topTrailingRadius: 44 * (1 - expansionProgress)))
+    }
+
+    @ViewBuilder
+    private var playlistCloseButton: some View {
+        closePlaylistButton
+            .buttonStyle(.plain)
+    }
+
+    private var closePlaylistButton: some View {
+        Button {
+            withAnimation(heroAnimation) { isSheetVisible = false }
+        } label: {
+            closeButtonSurface
+        }
+        .accessibilityLabel("Close playlist")
+    }
+
+    private var closeButtonSurface: some View {
+        let surface = ZStack {
+            Circle().fill(.white.opacity(0.88))
+            Circle().strokeBorder(.white.opacity(0.96), lineWidth: 0.9)
+            Image(systemName: "xmark")
+                .font(.system(size: 16.5, weight: .regular))
+                .foregroundStyle(.black)
+        }
+        .frame(width: 36, height: 36)
+        .shadow(color: .black.opacity(0.08), radius: 2.25, x: 0, y: 1.125)
+
+        if #available(iOS 26.0, *) {
+            return AnyView(surface.glassEffect(.regular, in: Circle()))
+        } else {
+            return AnyView(surface.background(.regularMaterial, in: Circle()))
+        }
     }
 
     private func heroElements(sceneSize: CGSize) -> some View {
@@ -628,48 +644,86 @@ private struct TrackRow: View {
     let selected: Bool
     let isPlaying: Bool
     let selectAction: () -> Void
-    let playAction: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(track: track, cornerRadius: 22)
-                .frame(width: 42, height: 42)
-                .overlay {
-                    Button(action: playAction) {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.white)
-                            .offset(x: isPlaying ? 0 : 1)
-                            .frame(width: 27, height: 27)
-                            .background(Color.blue, in: Circle())
+        Button(action: selectAction) {
+            HStack(spacing: 12) {
+                ArtworkView(track: track, cornerRadius: 22)
+                    .frame(width: 42, height: 42)
+                    .overlay {
+                        if isPlaying {
+                            TrackEqualizerView()
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isPlaying ? "Pause \(track.title)" : "Play \(track.title)")
-                }
 
-            Button(action: selectAction) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .font(.system(size: 16.5, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                    Text(track.detail)
-                        .font(.system(size: 14.2))
-                        .foregroundStyle(Color(red: 0.57, green: 0.57, blue: 0.59))
-                        .lineLimit(1)
+                        Text(track.title)
+                            .font(.system(size: 16.5, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .lineLimit(1)
+                        Text(track.detail)
+                            .font(.system(size: 14.2))
+                            .foregroundStyle(Color(red: 0.57, green: 0.57, blue: 0.59))
+                            .lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .padding(.horizontal, 11)
+            .contentShape(Rectangle())
         }
-        .frame(minHeight: 58)
-        .padding(.horizontal, 11)
+        .buttonStyle(PlaylistTrackButtonStyle())
         .accessibilityLabel("\(track.title), \(track.detail)")
         .accessibilityHint(selected ? "Currently selected. Tap to restart." : "Play this track")
+    }
+}
+
+private struct PlaylistTrackButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background {
+                Rectangle()
+                    .fill(configuration.isPressed ? Color.gray.opacity(0.19) : .clear)
+            }
+            .animation(.easeInOut(duration: 0.14).delay(0.05), value: configuration.isPressed)
+    }
+}
+
+private struct TrackEqualizerView: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(.black.opacity(0.38))
+            HStack(alignment: .center, spacing: 2.5) {
+                EqualizerBar(height: 9, delay: 0)
+                EqualizerBar(height: 16, delay: 0.12)
+                EqualizerBar(height: 12, delay: 0.22)
+                EqualizerBar(height: 18, delay: 0.06)
+            }
+        }
+        .frame(width: 28, height: 28)
+        .accessibilityLabel("Now playing")
+    }
+}
+
+private struct EqualizerBar: View {
+    let height: CGFloat
+    let delay: Double
+    @State private var isAnimating = false
+
+    var body: some View {
+        Capsule()
+            .fill(.white)
+            .frame(width: 2.5, height: height)
+            .scaleEffect(y: isAnimating ? 0.42 : 1, anchor: .center)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.32).repeatForever(autoreverses: true).delay(delay)) {
+                    isAnimating = true
+                }
+            }
     }
 }
 
