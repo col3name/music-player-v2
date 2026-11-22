@@ -274,9 +274,20 @@ struct MusicSheetScene: View {
                     }
                     .frame(height: 0)
                     ForEach(DemoTrack.examples) { track in
-                        TrackRow(track: track, selected: player.track.id == track.id) {
-                            player.select(track)
-                        }
+                        let selected = player.track.id == track.id
+                        TrackRow(
+                            track: track,
+                            selected: selected,
+                            isPlaying: selected && player.isPlaying,
+                            selectAction: { player.select(track) },
+                            playAction: {
+                                if selected {
+                                    player.togglePlayback()
+                                } else {
+                                    player.select(track, autoPlay: true)
+                                }
+                            }
+                        )
                         if track.id != DemoTrack.examples.last?.id {
                             Divider()
                                 .padding(.leading, 63)
@@ -615,23 +626,30 @@ struct MusicSheetScene: View {
 private struct TrackRow: View {
     let track: DemoTrack
     let selected: Bool
-    let action: () -> Void
+    let isPlaying: Bool
+    let selectAction: () -> Void
+    let playAction: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ArtworkView(track: track, cornerRadius: 22)
-                    .frame(width: 42, height: 42)
-                    .overlay {
-                        if track.imageName == "Siopi" {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.45), radius: 2)
-                                .offset(x: 1)
-                        }
+        HStack(spacing: 12) {
+            ArtworkView(track: track, cornerRadius: 22)
+                .frame(width: 42, height: 42)
+                .overlay {
+                    Button(action: playAction) {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .offset(x: isPlaying ? 0 : 1)
+                            .frame(width: 27, height: 27)
+                            .background(Color.blue, in: Circle())
                     }
-                VStack(alignment: .leading, spacing: 2) {
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isPlaying ? "Pause \(track.title)" : "Play \(track.title)")
+                }
+
+            Button(action: selectAction) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(.system(size: 16.5, weight: .semibold))
                         .foregroundStyle(.black)
@@ -640,14 +658,16 @@ private struct TrackRow: View {
                         .font(.system(size: 14.2))
                         .foregroundStyle(Color(red: 0.57, green: 0.57, blue: 0.59))
                         .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(minHeight: 58)
-            .padding(.horizontal, 11)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: 58)
+        .padding(.horizontal, 11)
         .accessibilityLabel("\(track.title), \(track.detail)")
         .accessibilityHint(selected ? "Currently selected. Tap to restart." : "Play this track")
     }
