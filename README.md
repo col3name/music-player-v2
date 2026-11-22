@@ -1,4 +1,4 @@
-# Music Hero Sheet
+# Music Player V2
 
 A SwiftUI demo exploring a Telegram-style song playlist and an animated full-screen music player.
 
