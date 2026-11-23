@@ -77,6 +77,7 @@ struct MusicSheetScene: View {
                     .init(color: blended(ambientColors[1], toward: .white, amount: gradientLightening[4]), location: 0.88),
                     .init(color: blended(ambientColors[0], toward: .white, amount: gradientLightening[5]), location: 1)
                 ], startPoint: .top, endPoint: .bottom)
+                .blur(radius: 16 * expansionProgress)
                 .ignoresSafeArea()
                 .opacity(expansionProgress)
                 .allowsHitTesting(false)
