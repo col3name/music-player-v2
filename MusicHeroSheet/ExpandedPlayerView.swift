@@ -378,7 +378,7 @@ private struct ExpandedControls: View {
                     Spacer(minLength: 0)
                     ShareLink(item: "Listening to \(player.track.title) — \(player.track.artist)") {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 22, weight: .regular))
+                            .font(.system(size: 18, weight: .regular))
                             .foregroundStyle(.black)
                             .frame(width: 44, height: 40)
                             .contentShape(Rectangle())

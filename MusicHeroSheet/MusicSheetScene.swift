@@ -22,11 +22,6 @@ struct FullArtworkFrameKey: PreferenceKey {
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
-private struct LibraryScrollOffsetKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 /// The compact and expanded layouts remain mounted together. A single overlay interpolates
 /// the poster and track identity between their measured frames, so the transition can track a drag.
 struct MusicSheetScene: View {
@@ -43,9 +38,6 @@ struct MusicSheetScene: View {
     @State private var artworkDragX: CGFloat = 0
     @State private var isArtworkSwipeSettling = false
     @State private var posterAmbientColors: [Color] = []
-    @State private var libraryScrollOffset: CGFloat = 0
-    @State private var libraryDragStartedAtTop = false
-    @State private var librarySheetDragOffset: CGFloat = 0
 
     private var isExpanded: Bool { expansionProgress > 0.5 }
 
@@ -76,7 +68,6 @@ struct MusicSheetScene: View {
                 if isSheetVisible {
                     librarySheet(sceneHeight: geometry.size.height)
                         .frame(maxHeight: .infinity, alignment: .bottom)
-                        .offset(y: librarySheetDragOffset)
                         // The library's rounded card remains behind the player
                         // during expansion; fade the entire sheet out with it.
                         .opacity(1 - expansionProgress)
@@ -255,13 +246,6 @@ struct MusicSheetScene: View {
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: LibraryScrollOffsetKey.self,
-                            value: proxy.frame(in: .named("libraryListScroll")).minY
-                        )
-                    }
-                    .frame(height: 0)
                     ForEach(DemoTrack.examples) { track in
                         let selected = player.track.id == track.id
                         TrackRow(
@@ -285,38 +269,12 @@ struct MusicSheetScene: View {
                 // trailing content inset for the final row to clear its controls.
                 .padding(.bottom, 300)
             }
-            .coordinateSpace(name: "libraryListScroll")
             // Fill the sheet's available height; a fixed height here stopped the
             // scroll viewport well above the bottom on tall devices.
             .frame(maxHeight: .infinity)
             .scrollIndicators(.visible)
             .scrollBounceBehavior(.basedOnSize)
             .defaultScrollAnchor(.top)
-            .onPreferenceChange(LibraryScrollOffsetKey.self) { libraryScrollOffset = $0 }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { value in
-                        if value.translation.height > 0, !libraryDragStartedAtTop {
-                            libraryDragStartedAtTop = libraryScrollOffset >= -1
-                        }
-                        guard libraryDragStartedAtTop, value.translation.height > 0 else { return }
-                        librarySheetDragOffset = value.translation.height
-                    }
-                    .onEnded { value in
-                        defer { libraryDragStartedAtTop = false }
-                        guard libraryDragStartedAtTop else { return }
-                        if value.translation.height > 120 || value.predictedEndTranslation.height > 190 {
-                            withAnimation(heroAnimation) {
-                                isSheetVisible = false
-                                librarySheetDragOffset = 0
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                                librarySheetDragOffset = 0
-                            }
-                        }
-                    }
-            )
             .padding(.top, 22)
         }
         .frame(height: sceneHeight - 46)
@@ -780,7 +738,7 @@ private struct MiniPlayerPanel: View {
                 Spacer(minLength: 8)
                 ShareLink(item: "Listening to \(player.track.title) — \(player.track.artist)") {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 23, weight: .regular))
+                        .font(.system(size: 18, weight: .regular))
                         .frame(width: 44, height: 48)
                         .foregroundStyle(darkAppearance ? .white : .black)
                 }

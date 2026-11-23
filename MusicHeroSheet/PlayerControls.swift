@@ -65,11 +65,12 @@ struct TransportControls: View {
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             transportButton("arrow.up.arrow.down", active: player.shuffleEnabled,
-                            mutedWhenInactive: mutedSecondaryControls, label: "Shuffle") {
+                            mutedWhenInactive: mutedSecondaryControls, label: "Shuffle",
+                            size: compact ? 19 : 23) {
                 player.shuffleEnabled.toggle()
             }
             Spacer(minLength: 8)
-            transportButton("backward.fill", label: "Previous track", size: compact ? 32 : 35) {
+            transportButton("backward.fill", label: "Previous track", size: compact ? 28 : 35) {
                 player.previous()
             }.buttonStyle(TrackSkipButtonStyle())
             Spacer(minLength: 8)
@@ -85,12 +86,13 @@ struct TransportControls: View {
             .animation(.snappy(duration: 0.12), value: player.isPlaying)
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             Spacer(minLength: 8)
-            transportButton("forward.fill", label: "Next track", size: compact ? 32 : 35) {
+            transportButton("forward.fill", label: "Next track", size: compact ? 28 : 35) {
                 player.next()
             }.buttonStyle(TrackSkipButtonStyle())
             Spacer(minLength: 8)
             transportButton("repeat", active: player.repeatEnabled,
-                            mutedWhenInactive: mutedSecondaryControls, label: "Repeat") {
+                            mutedWhenInactive: mutedSecondaryControls, label: "Repeat",
+                            size: compact ? 19 : 23) {
                 player.repeatEnabled.toggle()
             }
         }
@@ -143,7 +145,7 @@ struct ProfileAddButton: View {
                   systemImage: player.addedToProfile ? "checkmark.circle.fill" : "person.crop.circle.badge.plus")
                 .font(.system(size: 17, weight: .semibold))
                 .frame(maxWidth: .infinity)
-                .frame(height: 54)
+                .frame(height: 44)
                 .foregroundStyle(.white)
                 .background(Color(red: 0.0, green: 0.53, blue: 1.0),
                             in: Capsule(style: .continuous))
