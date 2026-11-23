@@ -1399,16 +1399,16 @@ index 2a3f419cab..9ff790f834 100644
 2.44.0
 
 
-From 215788e9b3677ce300ab42c72679dc50c17557bd Mon Sep 17 00:00:00 2001
+From b9eb4700d56b1684a3c8d00582a006a291989452 Mon Sep 17 00:00:00 2001
 From: col3name <mmikushov@instaloper.com>
 Date: Mon, 23 Nov 2026 23:01:36 +0300
 Subject: [PATCH 4/4] feat: gradient v2
 
 ---
  .../OverlayAudioPlayerController.swift        |   3 +
- .../OverlayAudioPlayerControllerNode.swift    | 288 ++++++++++++++----
+ .../OverlayAudioPlayerControllerNode.swift    | 323 +++++++++++++-----
  .../OverlayAudioPlayerControlsNode.swift      |  42 ++-
- 3 files changed, 256 insertions(+), 77 deletions(-)
+ 3 files changed, 281 insertions(+), 87 deletions(-)
 
 diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerController.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerController.swift
 index 4b4bd1c298..cdb2027e3a 100644
@@ -1425,7 +1425,7 @@ index 4b4bd1c298..cdb2027e3a 100644
          self.ready.set(self.controllerNode.ready.get())
          
 diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
-index fd488fb549..84d2faa222 100644
+index fd488fb549..fba9400bb3 100644
 --- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
 +++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
 @@ -1,3 +1,4 @@
@@ -1489,7 +1489,39 @@ index fd488fb549..84d2faa222 100644
          
          self.controlsNode.updatePresentationData(self.presentationData)
      }
-@@ -1165,6 +1169,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+@@ -1027,12 +1031,14 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         transition.updateFrame(node: self.contentNode, frame: CGRect(origin: CGPoint(), size: layout.size))
+         self.outerAmbientGradientLayer.frame = CGRect(origin: .zero, size: layout.size)
+         
+-        // The bottom controls panel spans iPhone Duo's side strip; it keeps clear only of a corner block at the bottom.
+-        // Equal insets keep the controls across the full width, as before.
++        // Keep landscape controls inside the device's side and corner safe areas.
++        // In portrait, the panel still spans the full width except beside a side strip.
+         let controlsBottomInsets = layout.bottomEdgeSideInsets()
+-        let controlsLeftInset: CGFloat = layout.safeInsets.left != layout.safeInsets.right ? controlsBottomInsets.left : 0.0
+-        let controlsRightInset: CGFloat = layout.safeInsets.left != layout.safeInsets.right ? controlsBottomInsets.right : 0.0
+-        let controlsHeight = self.controlsNode.updateLayout(width: layout.size.width, leftInset: controlsLeftInset, rightInset: controlsRightInset, bottomInset: layout.intrinsicInsets.bottom, maxHeight: layout.size.height, savedMusic: self.isSaved, transition: transition)
++        let isLandscape = layout.size.width > layout.size.height
++        let controlsLeftInset = isLandscape || layout.safeInsets.left != layout.safeInsets.right ? controlsBottomInsets.left : 0.0
++        let controlsRightInset = isLandscape || layout.safeInsets.left != layout.safeInsets.right ? controlsBottomInsets.right : 0.0
++        let controlsBottomInset = max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom)
++        let controlsHeight = self.controlsNode.updateLayout(width: layout.size.width, leftInset: controlsLeftInset, rightInset: controlsRightInset, bottomInset: controlsBottomInset, maxHeight: layout.size.height, savedMusic: self.isSaved, transition: transition)
+ 
+         let controlsFrame = CGRect(origin: CGPoint(x: 0.0, y: layout.size.height - controlsHeight), size: CGSize(width: layout.size.width, height: controlsHeight))
+         let controlsTransition = self.controlsNode.frame.width > 0.0 ? transition : .immediate
+@@ -1041,7 +1047,10 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         let layoutTopInset: CGFloat = max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top)
+         // The playlist keeps 16pt clear of a side strip (iPhone Duo), so its rows and header stay out of the strip and of
+         // the status corner above it when the sheet rises to the top; 16pt on each side otherwise.
+-        let listSideMargins = layout.listSideMargins(base: 16.0)
++        let baseListSideMargins = layout.listSideMargins(base: 16.0)
++        let listSideMargins = isLandscape
++            ? (left: max(baseListSideMargins.left, layout.safeInsets.left + 16.0), right: max(baseListSideMargins.right, layout.safeInsets.right + 16.0))
++            : baseListSideMargins
+         var insets = UIEdgeInsets()
+         insets.left = listSideMargins.left
+         insets.right = listSideMargins.right
+@@ -1165,6 +1174,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
          self.albumArtBackground.frame = CGRect(origin: .zero, size: layout.size)
          self.ambientGradientLayer.frame = self.albumArtBackground.bounds
          self.ambientGradientBlurView.frame = CGRect(origin: .zero, size: layout.size)
@@ -1499,7 +1531,34 @@ index fd488fb549..84d2faa222 100644
          
          if let _ = self.currentAlbumArt {
              var animateIn = false
-@@ -1213,7 +1220,6 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+@@ -1182,12 +1194,22 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             // iPhone Duo: beside a side strip the cover keeps to the band between the side insets (in folded portrait it
+             // reached 31pt into the strip and the status corner). Elsewhere the insets are equal and the band is the
+             // whole width, as before.
+-            let albumArtBandInsets: (left: CGFloat, right: CGFloat) = layout.safeInsets.left != layout.safeInsets.right ? (layout.safeInsets.left, layout.safeInsets.right) : (0.0, 0.0)
++            let isLandscape = layout.size.width > layout.size.height
++            let albumArtBandInsets: (left: CGFloat, right: CGFloat) = isLandscape || layout.safeInsets.left != layout.safeInsets.right
++                ? (layout.safeInsets.left, layout.safeInsets.right)
++                : (0.0, 0.0)
+             let albumArtBandWidth = layout.size.width - albumArtBandInsets.left - albumArtBandInsets.right
+-            let albumArtSide = min(360.0, albumArtBandWidth - 32.0)
++            let albumArtSide = isLandscape
++                ? min(180.0, albumArtBandWidth - 32.0, layout.size.height * 0.38)
++                : min(360.0, albumArtBandWidth - 32.0)
+             let albumArtSize = CGSize(width: albumArtSide, height: albumArtSide)
+-            let albumArtTop = max(layoutTopInset + 8.0, floorToScreenPixels((layout.size.height - albumArtSize.height) / 2.0 - 80.0))
+-            self.albumArtNode.frame = CGRect(origin: CGPoint(x: albumArtBandInsets.left + floorToScreenPixels((albumArtBandWidth - albumArtSize.width) / 2.0), y: albumArtTop), size: albumArtSize)
++            let albumArtTop = isLandscape
++                ? layoutTopInset + 8.0
++                : max(layoutTopInset + 8.0, floorToScreenPixels((layout.size.height - albumArtSize.height) / 2.0 - 80.0))
++            let albumArtLeft = isLandscape
++                ? albumArtBandInsets.left + 24.0
++                : albumArtBandInsets.left + floorToScreenPixels((albumArtBandWidth - albumArtSize.width) / 2.0)
++            self.albumArtNode.frame = CGRect(origin: CGPoint(x: albumArtLeft, y: albumArtTop), size: albumArtSize)
+             
+             let makeLargeAlbumArtLayout = self.albumArtNode.asyncLayout()
+             let applyLargeAlbumArt = makeLargeAlbumArtLayout(TransformImageArguments(corners: ImageCorners(radius: 16.0), imageSize: albumArtSize, boundingSize: albumArtSize, intrinsicInsets: UIEdgeInsets()))
+@@ -1213,7 +1235,6 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
                      self.updatePosterTilt(isPlaying: self.controlsNode.isPlaying)
                  }
                  UIView.animate(withDuration: 0.2, animations: {
@@ -1507,7 +1566,7 @@ index fd488fb549..84d2faa222 100644
                      self.albumArtBackground.alpha = 1.0
                      self.ambientGradientBlurView.alpha = self.ambientBlurOpacity
                  })
-@@ -1339,64 +1345,47 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+@@ -1339,64 +1360,47 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
      }
  
      private func updateAmbientGradient(animated: Bool) {
@@ -1609,7 +1668,7 @@ index fd488fb549..84d2faa222 100644
          }
      }
  
-@@ -1449,6 +1438,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+@@ -1449,6 +1453,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
          self.currentAlbumArt = nil
          self.updatePosterTilt(isPlaying: false)
          self.controlsNode.usesAmbientBackdrop = false
@@ -1619,7 +1678,7 @@ index fd488fb549..84d2faa222 100644
          self.controlsNode.setArtworkExpanded(false, animated: true)
          self.containerLayoutUpdated(layout, transition: .animated(duration: 0.3, curve: .easeInOut))
      }
-@@ -2116,6 +2108,25 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+@@ -2116,6 +2123,25 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
                  break
              }
          }
@@ -1645,7 +1704,7 @@ index fd488fb549..84d2faa222 100644
          while selected.count < 4 {
              selected.append(selected[0])
          }
-@@ -2128,13 +2139,158 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+@@ -2128,13 +2154,158 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
      }
  }
  
