@@ -17,6 +17,44 @@ struct FullArtworkFrameKey: PreferenceKey {
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
+private struct ReactionFlightPosition: AnimatableModifier {
+    let start: CGPoint
+    let firstControl: CGPoint
+    let secondControl: CGPoint
+    let end: CGPoint
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let t = min(1, max(0, progress))
+        let u = 1 - t
+        let point = CGPoint(
+            x: u * u * u * start.x + 3 * u * u * t * firstControl.x
+                + 3 * u * t * t * secondControl.x + t * t * t * end.x,
+            y: u * u * u * start.y + 3 * u * u * t * firstControl.y
+                + 3 * u * t * t * secondControl.y + t * t * t * end.y
+        )
+        return content.position(point)
+    }
+}
+
+private struct LandingShadowVisibility: AnimatableModifier {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.opacity(min(1, max(0, (progress - 0.72) / 0.28)))
+    }
+}
+
 /// The compact and expanded layouts remain mounted together. A single overlay interpolates
 /// the poster and track identity between their measured frames, so the transition can track a drag.
 struct MusicSheetScene: View {
@@ -32,6 +70,14 @@ struct MusicSheetScene: View {
     @State private var artworkDragX: CGFloat = 0
     @State private var isArtworkSwipeSettling = false
     @State private var posterAmbientColors: [Color] = []
+    @State private var flyingTrack: DemoTrack?
+    @State private var outgoingMiniTrack: DemoTrack?
+    @State private var miniPosterVisible = true
+    @State private var flightSourceFrame: CGRect = .zero
+    @State private var flightDestinationFrame: CGRect = .zero
+    @State private var flightGeneration = 0
+    @State private var flightProgress: CGFloat = 0
+    @State private var hasSelectedPlaylistTrack = false
 
     private var isExpanded: Bool { expansionProgress > 0.5 }
 
@@ -123,6 +169,55 @@ struct MusicSheetScene: View {
                     .zIndex(expansionProgress > 0.5 ? 3 : 5)
             }
             .coordinateSpace(name: "musicScene")
+            // Put the flight in a scene-wide overlay so it always renders over
+            // the playlist, hero artwork, and mini-player controls.
+            .overlay {
+                GeometryReader { overlayGeometry in
+                    if let flyingTrack {
+                        let source = flightSourceFrame
+                        let destination = flightDestinationFrame
+                        let bow = min(overlayGeometry.size.width * 0.28, 110) * 0.7
+                        let travelY = destination.midY - source.midY
+                        let firstControl = CGPoint(x: source.midX + bow,
+                                                   y: source.midY + travelY * 0.12)
+                        let secondControl = CGPoint(x: destination.midX + bow,
+                                                    y: destination.midY - travelY * 0.26)
+                        let t = min(1, max(0, flightProgress))
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white.opacity(0.14))
+                                .frame(width: 45, height: 45)
+                                .shadow(color: .black.opacity(0.11), radius: 11, x: 0, y: 6)
+                                .modifier(LandingShadowVisibility(progress: flightProgress))
+                                .position(x: destination.midX, y: destination.midY)
+
+                            ArtworkView(track: flyingTrack, cornerRadius: 22 - 12 * t)
+                                .frame(width: 42 + 3 * t, height: 42 + 3 * t)
+                                .overlay {
+                                    LinearGradient(
+                                        colors: [.white.opacity(0.08), .clear, .black.opacity(0.10)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 22 - 12 * t, style: .continuous))
+                                    .opacity(t)
+                                }
+                                .modifier(ReactionFlightPosition(
+                                    start: CGPoint(x: source.midX, y: source.midY),
+                                    firstControl: firstControl,
+                                    secondControl: secondControl,
+                                    end: CGPoint(x: destination.midX, y: destination.midY),
+                                    progress: flightProgress
+                                ))
+                                .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 12)
+                        }
+                        .frame(width: overlayGeometry.size.width, height: overlayGeometry.size.height)
+                        .zIndex(1000)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .allowsHitTesting(false)
+            }
             .onPreferenceChange(MiniArtworkFrameKey.self) { miniArtworkFrame = $0 }
             .onPreferenceChange(FullArtworkFrameKey.self) { fullArtworkFrame = $0 }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -158,6 +253,59 @@ struct MusicSheetScene: View {
     private func updatePosterAmbientColors() {
         withAnimation(.easeInOut(duration: 0.55)) {
             posterAmbientColors = PosterColorPalette.colors(for: player.track)
+        }
+    }
+
+    private func selectPlaylistTrack(_ track: DemoTrack, from source: CGRect, sceneHeight: CGFloat) {
+        if track.id == player.track.id && (hasSelectedPlaylistTrack || player.isPlaying || player.elapsed > 0) {
+            hasSelectedPlaylistTrack = true
+            flightGeneration += 1
+            flyingTrack = nil
+            outgoingMiniTrack = nil
+            flightSourceFrame = .zero
+            flightDestinationFrame = .zero
+            flightProgress = 0
+            withAnimation(.easeInOut(duration: 0.12)) {
+                miniPosterVisible = true
+            }
+            player.togglePlayback()
+            return
+        }
+
+        flightGeneration += 1
+        let generation = flightGeneration
+        flightSourceFrame = source
+        let miniDestination = miniArtworkFrame.width > 0
+            ? miniArtworkFrame
+            : CGRect(x: 16, y: sceneHeight - 230, width: 45, height: 45)
+        flightDestinationFrame = miniDestination.offsetBy(dx: 0, dy: -26)
+        let flightDuration: TimeInterval = source.midY < sceneHeight * 0.5 ? 0.25 : 0.2
+        hasSelectedPlaylistTrack = true
+        outgoingMiniTrack = player.track
+        flyingTrack = track
+        flightProgress = 0
+        withAnimation(.easeInOut(duration: 0.15)) {
+            miniPosterVisible = false
+        }
+        player.select(track)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard flightGeneration == generation else { return }
+            withAnimation(.easeInOut(duration: flightDuration)) {
+                flightProgress = 1
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration + 0.08) {
+            guard flightGeneration == generation else { return }
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                flyingTrack = nil
+                outgoingMiniTrack = nil
+                miniPosterVisible = true
+                flightSourceFrame = .zero
+                flightDestinationFrame = .zero
+                flightProgress = 0
+            }
         }
     }
 
@@ -245,8 +393,9 @@ struct MusicSheetScene: View {
                             track: track,
                             selected: selected,
                             isPlaying: selected && player.isPlaying,
+                            isFlying: flyingTrack?.id == track.id,
                             frequencyBands: player.frequencyBands,
-                            selectAction: { player.select(track) }
+                            selectAction: { source in selectPlaylistTrack(track, from: source, sceneHeight: sceneHeight) }
                         )
                         if track.id != DemoTrack.examples.last?.id {
                             Divider()
@@ -326,9 +475,10 @@ struct MusicSheetScene: View {
         GeometryReader { _ in
             // Match the nearly edge-to-edge artwork size in the playback reference.
             let coverSize = min(sceneSize.width - 48, 340)
-            let sourceArtwork = miniArtworkFrame.width > 0
+            let measuredMiniArtwork = miniArtworkFrame.width > 0
                 ? miniArtworkFrame
-                : CGRect(x: 16, y: sceneSize.height - 260, width: 45, height: 45)
+                : CGRect(x: 16, y: sceneSize.height - 230, width: 45, height: 45)
+            let sourceArtwork = measuredMiniArtwork.offsetBy(dx: 0, dy: -26)
             let destinationArtwork = fullArtworkFrame.width > 0
                 ? fullArtworkFrame
                 : CGRect(x: (sceneSize.width - coverSize) / 2,
@@ -427,17 +577,19 @@ struct MusicSheetScene: View {
                             .allowsHitTesting(false)
 
                         PulsingPosterArtwork(
-                            track: player.track,
+                            track: outgoingMiniTrack ?? player.track,
                             cornerRadius: 10 + (16 - 10) * p,
                             isPlaying: p > 0.5 && player.isPlaying,
                             audioLevel: frequencyPulse
                         )
                             .frame(width: artworkFrame.width, height: artworkFrame.height)
+                            .scaleEffect(miniPosterVisible ? 1 : 0.82)
+                            .opacity(miniPosterVisible ? 1 : 0)
                     }
                         .frame(width: artworkFrame.width, height: artworkFrame.height)
                         .position(
                             x: artworkFrame.midX + resistedDrag,
-                            y: artworkFrame.midY + 4 * (1 - p)
+                            y: artworkFrame.midY
                         )
                         .zIndex(1)
                         // Scale after positioning so the transform is centered on
@@ -563,14 +715,19 @@ private struct TrackRow: View {
     let track: DemoTrack
     let selected: Bool
     let isPlaying: Bool
+    let isFlying: Bool
     let frequencyBands: [CGFloat]
-    let selectAction: () -> Void
-
+    let selectAction: (CGRect) -> Void
     var body: some View {
-        Button(action: selectAction) {
+        GeometryReader { rowGeometry in
+        Button {
+            let row = rowGeometry.frame(in: .named("musicScene"))
+            selectAction(CGRect(x: row.minX + 11, y: row.midY - 21, width: 42, height: 42))
+        } label: {
             HStack(spacing: 12) {
                 ArtworkView(track: track, cornerRadius: 22)
                     .frame(width: 42, height: 42)
+                    .opacity(isFlying ? 0 : 1)
                     .overlay {
                         if isPlaying {
                             TrackEqualizerView(levels: frequencyBands)
@@ -601,6 +758,8 @@ private struct TrackRow: View {
         .buttonStyle(PlaylistTrackButtonStyle())
         .accessibilityLabel("\(track.title), \(track.detail)")
         .accessibilityHint(selected ? "Currently selected. Tap to restart." : "Play this track")
+        }
+        .frame(height: 58)
     }
 }
 

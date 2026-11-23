@@ -203,17 +203,16 @@ final class AudioPlaybackManager: ObservableObject {
                 }
             }
         } else {
-            return await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    do {
-                        try session.setActive(true)
-                        continuation.resume(returning: true)
-                    } catch {
-                        print("Could not activate audio session: \(error)")
-                        continuation.resume(returning: false)
-                    }
+            return await Task.detached(priority: .userInitiated) {
+                do {
+                    try session.setActive(true)
+                    return true
+                } catch {
+                    print("Could not activate audio session: \(error)")
+                    return false
                 }
             }
+            .value
         }
         #else
         return true
