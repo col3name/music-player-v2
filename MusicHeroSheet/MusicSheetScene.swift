@@ -128,7 +128,7 @@ struct MusicSheetScene: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .ignoresSafeArea()
-        .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
             player.tick()
         }
         .onAppear { updatePosterAmbientColors() }
@@ -245,6 +245,7 @@ struct MusicSheetScene: View {
                             track: track,
                             selected: selected,
                             isPlaying: selected && player.isPlaying,
+                            frequencyBands: player.frequencyBands,
                             selectAction: { player.select(track) }
                         )
                         if track.id != DemoTrack.examples.last?.id {
@@ -344,6 +345,11 @@ struct MusicSheetScene: View {
                          height: sourceArtwork.height)
                 : interpolatedArtworkFrame
             let p = expansionProgress
+            let frequencyPulse = p > 0.5 && player.isPlaying
+                ? (player.frequencyBands[0] * 0.42
+                    + player.frequencyBands[1] * 0.36
+                    + player.frequencyBands[2] * 0.22)
+                : 0
             // Add a small scale transform on top of the frame interpolation so
             // the poster visibly grows with the finger during an upward drag.
             let swipeScale = 1 + 0.06 * p
@@ -421,26 +427,7 @@ struct MusicSheetScene: View {
                             .opacity(p)
                             .allowsHitTesting(false)
 
-                        // A softly enlarged copy lets the poster colors feather into
-                        // the ambient backdrop instead of ending at a hard edge.
-                        ArtworkView(track: player.track, cornerRadius: 10 + (6 - 10) * p)
-                            .frame(width: artworkFrame.width, height: artworkFrame.height)
-                            .scaleEffect(1.09)
-                            .blur(radius: 24)
-                            .opacity(0.72 * p)
-                            .allowsHitTesting(false)
-
-                        // A restrained ambient halo sits close to the artwork
-                        // during playback and fades away when paused.
-                        ArtworkView(track: player.track, cornerRadius: 10 + (6 - 10) * p)
-                            .frame(width: artworkFrame.width, height: artworkFrame.height)
-                            .scaleEffect(1.035)
-                            .blur(radius: 12)
-                            .opacity(p * (player.isPlaying ? 0.24 : 0))
-                            .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
-                            .allowsHitTesting(false)
-
-                        ArtworkView(track: player.track, cornerRadius: 10 + (6 - 10) * p)
+                        ArtworkView(track: player.track, cornerRadius: 10 + (16 - 10) * p)
                             .frame(width: artworkFrame.width, height: artworkFrame.height)
                     }
                         .frame(width: artworkFrame.width, height: artworkFrame.height)
@@ -458,6 +445,8 @@ struct MusicSheetScene: View {
                             anchor: .center
                         )
                         .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
+                        .scaleEffect(1 + frequencyPulse / max(artworkFrame.width, 1))
+                        .animation(.linear(duration: 0.1), value: frequencyPulse)
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 18)
@@ -572,6 +561,7 @@ private struct TrackRow: View {
     let track: DemoTrack
     let selected: Bool
     let isPlaying: Bool
+    let frequencyBands: [CGFloat]
     let selectAction: () -> Void
 
     var body: some View {
@@ -581,7 +571,7 @@ private struct TrackRow: View {
                     .frame(width: 42, height: 42)
                     .overlay {
                         if isPlaying {
-                            TrackEqualizerView()
+                            TrackEqualizerView(levels: frequencyBands)
                         }
                     }
 
@@ -625,14 +615,16 @@ private struct PlaylistTrackButtonStyle: ButtonStyle {
 }
 
 private struct TrackEqualizerView: View {
+    let levels: [CGFloat]
+
     var body: some View {
         ZStack {
             Circle().fill(.black.opacity(0.38))
             HStack(alignment: .center, spacing: 2.5) {
-                EqualizerBar(height: 9, delay: 0)
-                EqualizerBar(height: 16, delay: 0.12)
-                EqualizerBar(height: 12, delay: 0.22)
-                EqualizerBar(height: 18, delay: 0.06)
+                EqualizerBar(height: 9, level: levels[0])
+                EqualizerBar(height: 16, level: levels[1])
+                EqualizerBar(height: 12, level: levels[2])
+                EqualizerBar(height: 18, level: levels[1])
             }
         }
         .frame(width: 28, height: 28)
@@ -642,19 +634,14 @@ private struct TrackEqualizerView: View {
 
 private struct EqualizerBar: View {
     let height: CGFloat
-    let delay: Double
-    @State private var isAnimating = false
+    let level: CGFloat
 
     var body: some View {
         Capsule()
             .fill(.white)
             .frame(width: 2.5, height: height)
-            .scaleEffect(y: isAnimating ? 0.42 : 1, anchor: .center)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.32).repeatForever(autoreverses: true).delay(delay)) {
-                    isAnimating = true
-                }
-            }
+            .scaleEffect(y: 0.2 + min(1, max(0, level)) * 0.8, anchor: .center)
+            .animation(.linear(duration: 0.1), value: level)
     }
 }
 

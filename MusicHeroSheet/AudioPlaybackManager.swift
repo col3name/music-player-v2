@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import Combine
 import Foundation
 import MediaPlayer
@@ -19,11 +20,14 @@ final class AudioPlaybackManager: ObservableObject {
     @Published private(set) var isPreparingPlayback = false
     @Published private(set) var artworkSlideDirection: ArtworkSlideDirection?
     @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var frequencyBands: [CGFloat] = [0, 0, 0]
     @Published var shuffleEnabled = false
     @Published var repeatEnabled = false
     @Published var addedToProfile = false
 
     private var audio: AVAudioPlayer?
+    private var analysisFile: AVAudioFile?
+    private let fftSetup = vDSP_create_fftsetup(11, FFTRadix(kFFTRadix2))
     private var playbackRequestID = 0
     private var remoteCommandsConfigured = false
 
@@ -57,9 +61,11 @@ final class AudioPlaybackManager: ObservableObject {
         }
         do {
             audio = try AVAudioPlayer(contentsOf: url)
+            analysisFile = try AVAudioFile(forReading: url)
             audio?.currentTime = min(seconds, audio?.duration ?? seconds)
             elapsed = audio?.currentTime ?? seconds
         } catch {
+            analysisFile = nil
             print("Could not open bundled demo audio: \(error)")
         }
     }
@@ -67,6 +73,7 @@ final class AudioPlaybackManager: ObservableObject {
     func tick() {
         guard let audio else { return }
         elapsed = audio.currentTime
+        updateFrequencyBands()
         updateNowPlaying()
         if isPlaying && !audio.isPlaying {
             if repeatEnabled {
@@ -77,6 +84,72 @@ final class AudioPlaybackManager: ObservableObject {
                 elapsed = duration
                 updateNowPlaying()
             }
+        }
+    }
+
+    private func updateFrequencyBands() {
+        let fftSize = 2048
+        guard isPlaying,
+              let file = analysisFile,
+              let fftSetup,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: AVAudioFrameCount(fftSize)),
+              let channels = buffer.floatChannelData else {
+            frequencyBands = [0, 0, 0]
+            return
+        }
+
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0 else { return }
+        file.framePosition = AVAudioFramePosition(max(0, audio?.currentTime ?? 0) * sampleRate)
+        do {
+            try file.read(into: buffer, frameCount: AVAudioFrameCount(fftSize))
+        } catch {
+            frequencyBands = [0, 0, 0]
+            return
+        }
+
+        let count = Int(buffer.frameLength)
+        guard count == fftSize else { return }
+        let channelCount = Int(file.processingFormat.channelCount)
+        var samples = [Float](repeating: 0, count: fftSize)
+        for channel in 0..<channelCount {
+            for index in 0..<fftSize {
+                samples[index] += channels[channel][index] / Float(max(channelCount, 1))
+            }
+        }
+
+        var real = [Float](repeating: 0, count: fftSize / 2)
+        var imaginary = [Float](repeating: 0, count: fftSize / 2)
+        var spectrum = [Float](repeating: 0, count: fftSize / 2)
+        let log2Size = vDSP_Length(log2(Float(fftSize)))
+        samples.withUnsafeMutableBufferPointer { sampleBuffer in
+            real.withUnsafeMutableBufferPointer { realBuffer in
+                imaginary.withUnsafeMutableBufferPointer { imaginaryBuffer in
+                    spectrum.withUnsafeMutableBufferPointer { spectrumBuffer in
+                        var split = DSPSplitComplex(realp: realBuffer.baseAddress!,
+                                                    imagp: imaginaryBuffer.baseAddress!)
+                        sampleBuffer.baseAddress!.withMemoryRebound(to: DSPComplex.self,
+                                                                    capacity: fftSize / 2) { complex in
+                            vDSP_ctoz(complex, 2, &split, 1, vDSP_Length(fftSize / 2))
+                        }
+                        vDSP_fft_zrip(fftSetup, &split, 1, log2Size, FFTDirection(FFT_FORWARD))
+                        vDSP_zvmags(&split, 1, spectrumBuffer.baseAddress!, 1,
+                                    vDSP_Length(fftSize / 2))
+                    }
+                }
+            }
+        }
+
+        let ranges: [(Double, Double)] = [(35, 250), (250, 2_000), (2_000, 10_000)]
+        frequencyBands = ranges.map { lower, upper in
+            let firstBin = max(1, Int(lower * Double(fftSize) / sampleRate))
+            let lastBin = min(fftSize / 2, Int(upper * Double(fftSize) / sampleRate))
+            guard firstBin < lastBin else { return 0 }
+            let meanPower = spectrum[firstBin..<lastBin].reduce(Float.zero, +)
+                / Float(lastBin - firstBin)
+            let level = min(1, max(0, sqrt(meanPower) / Float(fftSize) * 60))
+            return CGFloat(level)
         }
     }
 
