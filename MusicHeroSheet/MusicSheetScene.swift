@@ -817,7 +817,7 @@ private struct PulsingPosterArtwork: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     // Sweep the subtle 3D tilt axis in a circle around the poster.
                     .rotation3DEffect(
-                        .degrees(isPlaying ? sin(tiltPhase) * 0.8 : 0),
+                        .degrees(isPlaying ? sin(tiltPhase) * 1.0 : 0),
                         axis: (x: tiltAxisX, y: tiltAxisY, z: 0),
                         perspective: 0.62
                     )
