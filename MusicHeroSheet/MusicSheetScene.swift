@@ -77,7 +77,6 @@ struct MusicSheetScene: View {
                     .init(color: blended(ambientColors[1], toward: .white, amount: gradientLightening[4]), location: 0.88),
                     .init(color: blended(ambientColors[0], toward: .white, amount: gradientLightening[5]), location: 1)
                 ], startPoint: .top, endPoint: .bottom)
-                .blur(radius: 16 * expansionProgress)
                 .ignoresSafeArea()
                 .opacity(expansionProgress)
                 .allowsHitTesting(false)
@@ -372,7 +371,7 @@ struct MusicSheetScene: View {
                 }
             }()
             let dragLimit = max(1, artworkFrame.width)
-            let posterSpacing: CGFloat = 18
+            let posterSpacing: CGFloat = 36
             let posterTravel = dragLimit + posterSpacing
             let resistedDrag = previewTrack == nil ? artworkDragX * 0.22 : artworkDragX
             let outgoingSwipeProgress = min(1, max(0, abs(artworkDragX) / posterTravel))
@@ -442,7 +441,7 @@ struct MusicSheetScene: View {
                         .scaleEffect(
                             swipeScale
                                 * outgoingPosterScale
-                                * (p > 0.5 ? (player.isPlaying ? 1 : 0.95) : 1),
+                                * (p > 0.5 ? (player.isPlaying ? 1.04 : 1) : 1),
                             anchor: .center
                         )
                         .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
