@@ -230,34 +230,46 @@ private struct IridescentArtworkBlend: View {
     var isAnimating = false
 
     private var palette: [Color] {
-        colors.count >= 3
+        let base = colors.count >= 3
             ? colors
             : [Color(red: 0.65, green: 0.32, blue: 0.28), Color(red: 0.86, green: 0.62, blue: 0.50), Color(red: 0.28, green: 0.22, blue: 0.19)]
+        return [base[0], base[1], base[2], base[0].blended(with: base[1], fraction: 0.5)]
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isAnimating)) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate / 8
-            let x = sin(time) * 0.18
-            let y = cos(time) * 0.16
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { timeline in
+            // Keep the timeline alive while the expanded player is mounted;
+            // only advance the color field while playback is active. This avoids
+            // a paused TimelineView failing to resume after a play/pause change.
+            let time = isAnimating ? timeline.date.timeIntervalSinceReferenceDate : 0
+            Canvas { context, size in
+                // Sample a bilinear four-corner color field. The fine grid is
+                // blurred below so it reads as one continuous wallpaper.
+                let columns = 20
+                let rows = 24
+                let cellWidth = size.width / CGFloat(columns)
+                let cellHeight = size.height / CGFloat(rows)
+                let driftX = CGFloat(sin(time * 2 * .pi)) * 0.36
+                let driftY = CGFloat(cos(time * (2 * .pi / 1.1))) * 0.32
 
-            ZStack {
-                // Four independently drifting color points create a continuous
-                // bilinear-style color interpolation across the blurred poster glow.
-                RadialGradient(colors: [palette[0].opacity(0.88), .clear],
-                               center: .init(x: 0.24 + x, y: 0.24 + y),
-                               startRadius: 4, endRadius: 230)
-                RadialGradient(colors: [palette[1].opacity(0.82), .clear],
-                               center: .init(x: 0.76 - x, y: 0.28 + y),
-                               startRadius: 8, endRadius: 250)
-                RadialGradient(colors: [palette[2].opacity(0.72), .clear],
-                               center: .init(x: 0.25 + x, y: 0.76 - y),
-                               startRadius: 2, endRadius: 220)
-                RadialGradient(colors: [palette[0].opacity(0.66), .clear],
-                               center: .init(x: 0.74 - x, y: 0.78 - y),
-                               startRadius: 2, endRadius: 210)
+                for row in 0..<rows {
+                    for column in 0..<columns {
+                        let u = (CGFloat(column) + 0.5) / CGFloat(columns)
+                        let v = (CGFloat(row) + 0.5) / CGFloat(rows)
+                        let shiftedU = min(1, max(0, u + driftX * sin(.pi * v)))
+                        let shiftedV = min(1, max(0, v + driftY * sin(.pi * u)))
+                        let top = palette[0].blended(with: palette[1], fraction: shiftedU)
+                        let bottom = palette[2].blended(with: palette[3], fraction: shiftedU)
+                        let color = top.blended(with: bottom, fraction: shiftedV).opacity(0.82)
+                        let rect = CGRect(x: CGFloat(column) * cellWidth,
+                                          y: CGFloat(row) * cellHeight,
+                                          width: cellWidth + 1,
+                                          height: cellHeight + 1)
+                        context.fill(Path(rect), with: .color(color))
+                    }
+                }
             }
-            .blur(radius: 48)
+            .blur(radius: 38)
             .mask {
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),

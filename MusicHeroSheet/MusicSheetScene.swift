@@ -324,14 +324,13 @@ struct MusicSheetScene: View {
 
     private func heroElements(sceneSize: CGSize) -> some View {
         GeometryReader { _ in
-            // Leave room for the swipe scale while keeping the expanded poster
-            // visibly 20 pt smaller at rest. Layout and controls stay put.
-            let coverSize = min(sceneSize.width - 48, 355) - 60
+            // Match the nearly edge-to-edge artwork size in the playback reference.
+            let coverSize = min(sceneSize.width - 48, 340)
             let sourceArtwork = miniArtworkFrame.width > 0
                 ? miniArtworkFrame
                 : CGRect(x: 16, y: sceneSize.height - 260, width: 45, height: 45)
             let destinationArtwork = fullArtworkFrame.width > 0
-                ? fullArtworkFrame.insetBy(dx: 30, dy: 30)
+                ? fullArtworkFrame
                 : CGRect(x: (sceneSize.width - coverSize) / 2,
                          y: sceneSize.height * 0.22,
                          width: coverSize, height: coverSize)
