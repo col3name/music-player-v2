@@ -89,16 +89,20 @@ struct ExpandedPlayerView: View {
                             }
                         }
                         .accessibilityAddTraits(.isImage)
-
-                    // Flowing, blurred poster colors bridge the artwork and controls.
-                    if progress > 0.01 {
-                        IridescentArtworkBlend(colors: ambientColors)
-                            .frame(width: coverSize + 170, height: 220)
-                            .offset(y: 110)
-                            .frame(height: 0)
-                            .accessibilityHidden(true)
-                            .allowsHitTesting(false)
-                    }
+                        // Overlay keeps the glow out of the VStack's layout while
+                        // giving TimelineView a real 220pt canvas to render into.
+                        .overlay {
+                            if progress > 0.01 {
+                                IridescentArtworkBlend(
+                                    colors: ambientColors,
+                                    isAnimating: player.isPlaying && progress > 0.5 && !reduceMotion
+                                )
+                                .frame(width: coverSize + 170, height: 220)
+                                .offset(y: coverSize / 2 + 110)
+                                .accessibilityHidden(true)
+                                .allowsHitTesting(false)
+                            }
+                        }
 
                 ExpandedControls(player: player)
                         .frame(width: max(0, geometry.size.width - 50))
@@ -223,7 +227,7 @@ struct ExpandedPlayerView: View {
 
 private struct IridescentArtworkBlend: View {
     let colors: [Color]
-    @State private var phase = false
+    var isAnimating = false
 
     private var palette: [Color] {
         colors.count >= 3
@@ -232,29 +236,35 @@ private struct IridescentArtworkBlend: View {
     }
 
     var body: some View {
-        ZStack {
-            RadialGradient(colors: [palette[0].opacity(0.88), .clear],
-                           center: phase ? .init(x: 0.22, y: 0.22) : .init(x: 0.78, y: 0.25),
-                           startRadius: 4, endRadius: 230)
-            RadialGradient(colors: [palette[1].opacity(0.82), .clear],
-                           center: phase ? .init(x: 0.78, y: 0.70) : .init(x: 0.25, y: 0.78),
-                           startRadius: 8, endRadius: 250)
-            RadialGradient(colors: [palette[2].opacity(0.72), .clear],
-                           center: phase ? .init(x: 0.48, y: 0.88) : .init(x: 0.52, y: 0.16),
-                           startRadius: 2, endRadius: 180)
-        }
-        .blur(radius: 48)
-        .mask {
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black.opacity(0.9), location: 0.24),
-                .init(color: .black.opacity(0.8), location: 0.68),
-                .init(color: .clear, location: 1)
-            ], startPoint: .top, endPoint: .bottom)
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 5.5).repeatForever(autoreverses: true)) {
-                phase = true
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isAnimating)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate / 8
+            let x = sin(time) * 0.18
+            let y = cos(time) * 0.16
+
+            ZStack {
+                // Four independently drifting color points create a continuous
+                // bilinear-style color interpolation across the blurred poster glow.
+                RadialGradient(colors: [palette[0].opacity(0.88), .clear],
+                               center: .init(x: 0.24 + x, y: 0.24 + y),
+                               startRadius: 4, endRadius: 230)
+                RadialGradient(colors: [palette[1].opacity(0.82), .clear],
+                               center: .init(x: 0.76 - x, y: 0.28 + y),
+                               startRadius: 8, endRadius: 250)
+                RadialGradient(colors: [palette[2].opacity(0.72), .clear],
+                               center: .init(x: 0.25 + x, y: 0.76 - y),
+                               startRadius: 2, endRadius: 220)
+                RadialGradient(colors: [palette[0].opacity(0.66), .clear],
+                               center: .init(x: 0.74 - x, y: 0.78 - y),
+                               startRadius: 2, endRadius: 210)
+            }
+            .blur(radius: 48)
+            .mask {
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.9), location: 0.24),
+                    .init(color: .black.opacity(0.8), location: 0.68),
+                    .init(color: .clear, location: 1)
+                ], startPoint: .top, endPoint: .bottom)
             }
         }
     }

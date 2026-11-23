@@ -79,6 +79,8 @@ final class AudioPlaybackManager: ObservableObject {
             if repeatEnabled {
                 audio.currentTime = 0
                 audio.play()
+            } else if canAdvanceToNextTrack {
+                next()
             } else {
                 isPlaying = false
                 elapsed = duration
@@ -243,7 +245,7 @@ final class AudioPlaybackManager: ObservableObject {
     func next() {
         guard !DemoTrack.examples.isEmpty else { return }
         let current = DemoTrack.examples.firstIndex(of: track) ?? 0
-        guard current < DemoTrack.examples.count - 1 else { return }
+        guard shuffleEnabled || current < DemoTrack.examples.count - 1 else { return }
         let index: Int
         if shuffleEnabled {
             let others = DemoTrack.examples.indices.filter { DemoTrack.examples[$0].id != track.id }
@@ -253,6 +255,11 @@ final class AudioPlaybackManager: ObservableObject {
             index = current + 1
         }
         select(DemoTrack.examples[index], autoPlay: isPlaying, slideDirection: .next)
+    }
+
+    private var canAdvanceToNextTrack: Bool {
+        guard !DemoTrack.examples.isEmpty else { return false }
+        return shuffleEnabled || (DemoTrack.examples.firstIndex(of: track) ?? 0) < DemoTrack.examples.count - 1
     }
 
     func previous() {
