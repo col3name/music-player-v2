@@ -6,9 +6,9 @@ This is a visual prototype, not a Telegram client or API integration. It plays d
 
 ## Before & After
 
-| Before | After |
-| --- | --- |
-| ![Before](docs/media/before.jpg) | ![After](docs/media/after.jpg) |
+| Before | After                          |
+| --- |--------------------------------|
+| ![Before](docs/media/before.jpg) | ![After](docs/media/after.png) |
 
 ## Features
 
