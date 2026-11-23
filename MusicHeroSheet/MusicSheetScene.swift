@@ -426,7 +426,12 @@ struct MusicSheetScene: View {
                             .opacity(p)
                             .allowsHitTesting(false)
 
-                        ArtworkView(track: player.track, cornerRadius: 10 + (16 - 10) * p)
+                        PulsingPosterArtwork(
+                            track: player.track,
+                            cornerRadius: 10 + (16 - 10) * p,
+                            isPlaying: p > 0.5 && player.isPlaying,
+                            audioLevel: frequencyPulse
+                        )
                             .frame(width: artworkFrame.width, height: artworkFrame.height)
                     }
                         .frame(width: artworkFrame.width, height: artworkFrame.height)
@@ -444,8 +449,6 @@ struct MusicSheetScene: View {
                             anchor: .center
                         )
                         .animation(.easeInOut(duration: 0.22), value: player.isPlaying)
-                        .scaleEffect(1 + frequencyPulse / max(artworkFrame.width, 1))
-                        .animation(.linear(duration: 0.1), value: frequencyPulse)
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 18)
@@ -785,5 +788,51 @@ private struct BaseSceneView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
         }
         .ignoresSafeArea()
+    }
+}
+
+private struct PulsingPosterArtwork: View {
+    let track: DemoTrack
+    let cornerRadius: CGFloat
+    let isPlaying: Bool
+    let audioLevel: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { timeline in
+                let phase: CGFloat = isPlaying
+                    ? CGFloat(sin(timeline.date.timeIntervalSinceReferenceDate * 2 * .pi / 0.5))
+                    : 0
+                let pulseInPoints = 0.45 + min(1, max(0, audioLevel)) * 0.55
+                let orbitPhase = isPlaying
+                    ? timeline.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.8
+                    : 0
+                let tiltPhase = isPlaying
+                    ? timeline.date.timeIntervalSinceReferenceDate * 2 * .pi / 0.9
+                    : 0
+                let tiltAxisX = cos(orbitPhase)
+                let tiltAxisY = sin(orbitPhase)
+
+                ArtworkView(track: track, cornerRadius: cornerRadius)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    // Sweep the subtle 3D tilt axis in a circle around the poster.
+                    .rotation3DEffect(
+                        .degrees(isPlaying ? sin(tiltPhase) * 0.8 : 0),
+                        axis: (x: tiltAxisX, y: tiltAxisY, z: 0),
+                        perspective: 0.62
+                    )
+                    .overlay {
+                        LinearGradient(
+                            colors: [.white.opacity(isPlaying ? 0.16 : 0.08), .clear, .black.opacity(0.10)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                        .allowsHitTesting(false)
+                    }
+                    .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 12)
+                    .scaleEffect(1 + phase * pulseInPoints / max(geometry.size.width, 1))
+            }
+        }
     }
 }
