@@ -1,8 +1,8 @@
 # Music Player V2
 
-A SwiftUI demo exploring a Telegram-style song playlist and an animated full-screen music player.
+Song playlist and an animated full-screen music player.
 
-This is a visual prototype, not a Telegram client or API integration. It plays demo audio bundled with the app (MP3 and M4A files); playlists and profile actions are local UI examples.
+Visual prototype, not a Telegram client or API integration. It plays demo audio bundled with the app (MP3 and M4A files); playlists and profile actions are local UI examples.
 
 ## Before & After
 
@@ -10,12 +10,15 @@ This is a visual prototype, not a Telegram client or API integration. It plays d
 | --- |--------------------------------|
 | ![Before](docs/media/before.jpg) | ![After](docs/media/after.png) |
 
+[Video Demo](docs/media/music-v2.1-demo.mp4)
+
 ## Features
 
 - Expand and dismiss the player with gestures and animated artwork transitions.
 - Swipe across the artwork to change tracks.
 - Ambient Mode adds a soft, blurred artwork background.
 - Playback controls include play/pause, scrubbing, volume, shuffle, and repeat.
+- Flying poster animation
 
 ## Run
 
