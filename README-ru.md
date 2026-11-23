@@ -1,5 +1,20 @@
 # Music Player V2
 
+
+## 1. How apply to telegram-ios source code
+```
+# clone telegram-ios https://github.com/TelegramMessenger/Telegram-iOS
+
+git checkout 24638bc69b
+
+# apply changes http://github.com/col3name/timequoute-voice-message/blob/feature/stream-dynamic-island/changes.patch
+git apply changes.patch
+```
+
+## 2.  Run ios demo app with player mechanics (fast way without build heavy entire telegram-ios app)
+
+
+
 SwiftUI-демо плейлиста песен в стиле Telegram и полноэкранного музыкального плеера с жестами и анимациями.
 
 Это визуальный прототип, а не клиент Telegram и не интеграция с его API. Приложение воспроизводит встроенные демонстрационные аудиофайлы MP3 и M4A. Плейлист и действия с профилем локальные.

@@ -1,0 +1,1400 @@
+From 0bd621058149a6c36cb7b2919c355120e85130b1 Mon Sep 17 00:00:00 2001
+From: col3name <mmikushov@instaloper.com>
+Date: Mon, 23 Nov 2026 21:32:12 +0300
+Subject: [PATCH 1/3] Feat: music v2 with poster 3d transformation and simless
+ animation
+
+---
+ .../AccountContext/Sources/MediaManager.swift |   1 +
+ .../TelegramUI/Sources/MediaManager.swift     |   6 +
+ .../OverlayAudioPlayerControllerNode.swift    | 367 ++++++++++++++++--
+ .../OverlayAudioPlayerControlsNode.swift      | 141 ++++++-
+ 4 files changed, 475 insertions(+), 40 deletions(-)
+
+diff --git a/submodules/AccountContext/Sources/MediaManager.swift b/submodules/AccountContext/Sources/MediaManager.swift
+index 2a2343a082..d90d4e0bdd 100644
+--- a/submodules/AccountContext/Sources/MediaManager.swift
++++ b/submodules/AccountContext/Sources/MediaManager.swift
+@@ -276,6 +276,7 @@ public protocol MediaManager: AnyObject {
+     
+     func filteredPlaylistState(accountId: AccountRecordId, playlistId: SharedMediaPlaylistId, itemId: SharedMediaPlaylistItemId, type: MediaManagerPlayerType) -> Signal<SharedMediaPlayerItemPlaybackState?, NoError>
+     func filteredPlayerAudioLevelEvents(accountId: AccountRecordId, playlistId: SharedMediaPlaylistId, itemId: SharedMediaPlaylistItemId, type: MediaManagerPlayerType) -> Signal<Float, NoError>
++    var musicAudioLevel: Signal<Float, NoError> { get }
+     
+     func setOverlayVideoNode(_ node: OverlayMediaItemNode?)
+     func hasOverlayVideoNode(_ node: OverlayMediaItemNode) -> Bool
+diff --git a/submodules/TelegramUI/Sources/MediaManager.swift b/submodules/TelegramUI/Sources/MediaManager.swift
+index 7adc2d1919..97d8602a51 100644
+--- a/submodules/TelegramUI/Sources/MediaManager.swift
++++ b/submodules/TelegramUI/Sources/MediaManager.swift
+@@ -115,6 +115,7 @@ public final class MediaManagerImpl: NSObject, MediaManager {
+         didSet {
+             if self.musicMediaPlayer !== oldValue {
+                 if let musicMediaPlayer = self.musicMediaPlayer {
++                    self.musicAudioLevelValue.set(musicMediaPlayer.audioLevel)
+                     let type = musicMediaPlayer.type
+                     let account = musicMediaPlayer.engine.account
+                     self.musicMediaPlayerStateValue.set(musicMediaPlayer.playbackState
+@@ -129,6 +130,7 @@ public final class MediaManagerImpl: NSObject, MediaManager {
+                         }
+                     } |> deliverOnMainQueue)
+                 } else {
++                    self.musicAudioLevelValue.set(.single(0.0))
+                     self.musicMediaPlayerStateValue.set(.single(nil))
+                     self.musicListenTracker?.playerClosed()
+                 }
+@@ -136,6 +138,10 @@ public final class MediaManagerImpl: NSObject, MediaManager {
+         }
+     }
+     private let musicMediaPlayerStateValue = Promise<(Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?>(nil)
++    private let musicAudioLevelValue = Promise<Float>(0.0)
++    public var musicAudioLevel: Signal<Float, NoError> {
++        return self.musicAudioLevelValue.get()
++    }
+     public var musicMediaPlayerState: Signal<(Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?, NoError> {
+         return self.musicMediaPlayerStateValue.get()
+     }
+diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+index dcde2c4c71..6e1a50d635 100644
+--- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
++++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+@@ -64,7 +64,16 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     
+     private var currentAlbumArt: (FileMediaReference, SharedMediaPlaybackAlbumArt)?
+     private let albumArtBackground: UIVisualEffectView
++    private let ambientGradientLayer = CAGradientLayer()
++    private var ambientArtworkColors: (UIColor, UIColor)?
+     private let albumArtNode = TransformImageNode()
++    private var isAnimatingAlbumArtBackToMiniPlayer = false
++    private var isPosterFlightInProgress = false
++    private var isPosterTiltActive = false
++    private var posterAudioLevel: CGFloat = 0.0
++    private var posterMotionLink: CADisplayLink?
++    private var posterMotionTarget: AudioPosterMotionTarget?
++    private var posterAudioLevelDisposable: Disposable?
+     
+     private var saveMediaDisposable: MetaDisposable?
+     
+@@ -370,10 +379,29 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.collapseNode.setImage(generateCollapseIcon(theme: self.presentationData.theme), for: [])
+         
+         self.albumArtBackground = UIVisualEffectView()
+-        self.albumArtBackground.contentView.addSubview(self.albumArtNode.view)
+-        self.albumArtNode.isUserInteractionEnabled = false
++        self.albumArtNode.isUserInteractionEnabled = true
+         
+         super.init()
++
++        self.ambientGradientLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
++        self.ambientGradientLayer.endPoint = CGPoint(x: 0.5, y: 1.0)
++        self.ambientGradientLayer.locations = [0.0, 0.52, 1.0]
++        self.albumArtBackground.contentView.layer.insertSublayer(self.ambientGradientLayer, at: 0)
++        self.updateAmbientGradient(animated: false)
++        self.albumArtNode.imageUpdated = { [weak self] image in
++            guard let self, self.currentAlbumArt != nil, let image else {
++                return
++            }
++            self.ambientArtworkColors = albumArtAmbientColors(image)
++            self.updateAmbientGradient(animated: true)
++        }
++        self.controlsNode.playbackStateUpdated = { [weak self] isPlaying in
++            self?.updatePosterTilt(isPlaying: isPlaying)
++        }
++        self.posterAudioLevelDisposable = (context.sharedContext.mediaManager.musicAudioLevel
++        |> deliverOnMainQueue).startStrict(next: { [weak self] level in
++            self?.posterAudioLevel = CGFloat(max(0.0, min(1.0, level)))
++        })
+         
+         self.backgroundColor = nil
+         self.isOpaque = false
+@@ -419,6 +447,10 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+                 return
+             }
+             self.currentAlbumArt = fileReferenceAndAlbumArt
++            if fileReferenceAndAlbumArt != nil {
++                self.controlsNode.hasShadowlessBackground = true
++                self.controlsNode.usesAmbientBackdrop = true
++            }
+             
+             if let (fileReference, albumArt) = fileReferenceAndAlbumArt {
+                 self.albumArtNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false))
+@@ -426,6 +458,21 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             
+             self.containerLayoutUpdated(layout, transition: .animated(duration: 0.25, curve: .easeInOut))
+         }
++
++        self.controlsNode.updateAlbumArtDisplay = { [weak self] fileReferenceAndAlbumArt in
++            guard let self,
++                  let layout = self.validLayout,
++                  self.currentAlbumArt != nil,
++                  let (fileReference, albumArt) = fileReferenceAndAlbumArt else {
++                return
++            }
++
++            // Track changes replace the expanded artwork in place. They must not
++            // clear currentAlbumArt, which would start the collapse animation.
++            self.currentAlbumArt = (fileReference, albumArt)
++            self.albumArtNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false))
++            self.containerLayoutUpdated(layout, transition: .animated(duration: 0.25, curve: .easeInOut))
++        }
+         
+         self.controlsNode.requestCollapse = { [weak self] in
+             self?.requestDismiss()
+@@ -606,6 +653,8 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     }
+     
+     deinit {
++        self.posterMotionLink?.invalidate()
++        self.posterAudioLevelDisposable?.dispose()
+         self.presentationDataDisposable?.dispose()
+         self.replacementHistoryNodeReadyDisposable.dispose()
+         self.dataDisposable?.dispose()
+@@ -625,6 +674,12 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             guard let self else {
+                 return false
+             }
++            if self.albumArtNode.view.superview != nil {
++                let posterPoint = self.view.convert(point, to: self.albumArtNode.view)
++                if self.albumArtNode.bounds.contains(posterPoint) {
++                    return false
++                }
++            }
+             if self.historyFrameTopOverlayNode.bounds.contains(self.view.convert(point, to: self.historyFrameTopOverlayNode.view)) {
+                 return true
+             }
+@@ -634,6 +689,14 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             return false
+         }
+         self.view.addGestureRecognizer(panRecognizer)
++
++        let posterTapRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.albumArtTapped(_:)))
++        posterTapRecognizer.cancelsTouchesInView = true
++        self.albumArtNode.view.addGestureRecognizer(posterTapRecognizer)
++        let posterPanRecognizer = UIPanGestureRecognizer(target: self, action: #selector(self.largeAlbumArtPan(_:)))
++        posterPanRecognizer.cancelsTouchesInView = true
++        posterPanRecognizer.require(toFail: posterTapRecognizer)
++        self.albumArtNode.view.addGestureRecognizer(posterPanRecognizer)
+     }
+     
+     /// Rebuilds the rich message's playlist re-anchored on `mediaIndex`, exactly as tapping the
+@@ -735,6 +798,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.historyFrameRightOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopMaskNode.image = generateCornersImage(theme: self.presentationData.theme)
++        self.updateAmbientGradient(animated: false)
+         
+         self.collapseNode.setImage(generateCollapseIcon(theme: self.presentationData.theme), for: [])
+         
+@@ -1089,11 +1153,16 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.updateHistoryContentOffset(self.historyNode.visibleContentOffset(), transition: transition)
+         
+         self.albumArtBackground.frame = CGRect(origin: .zero, size: layout.size)
++        self.ambientGradientLayer.frame = self.albumArtBackground.bounds
+         
+         if let _ = self.currentAlbumArt {
+             var animateIn = false
+             if self.albumArtBackground.superview == nil {
+-                self.view.addSubview(self.albumArtBackground)
++                // One artwork-colored gradient spans the blurred playlist and the controls.
++                // Adding it to the root view placed it over the controlsNode and
++                // blurred or intercepted the expanded player's transport buttons.
++                self.albumArtBackground.alpha = 0.0
++                self.contentNode.view.insertSubview(self.albumArtBackground, belowSubview: self.controlsNode.view)
+                 animateIn = true
+             }
+             // iPhone Duo: beside a side strip the cover keeps to the band between the side insets (in folded portrait it
+@@ -1103,36 +1172,84 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             let albumArtBandWidth = layout.size.width - albumArtBandInsets.left - albumArtBandInsets.right
+             let albumArtSide = min(360.0, albumArtBandWidth - 32.0)
+             let albumArtSize = CGSize(width: albumArtSide, height: albumArtSide)
+-            self.albumArtNode.frame = CGRect(origin: CGPoint(x: albumArtBandInsets.left + floorToScreenPixels((albumArtBandWidth - albumArtSize.width) / 2.0), y: floorToScreenPixels((layout.size.height - albumArtSize.height) / 2.0)), size: albumArtSize)
++            let albumArtTop = max(layoutTopInset + 8.0, floorToScreenPixels((layout.size.height - albumArtSize.height) / 2.0 - 80.0))
++            self.albumArtNode.frame = CGRect(origin: CGPoint(x: albumArtBandInsets.left + floorToScreenPixels((albumArtBandWidth - albumArtSize.width) / 2.0), y: albumArtTop), size: albumArtSize)
+             
+             let makeLargeAlbumArtLayout = self.albumArtNode.asyncLayout()
+-            let applyLargeAlbumArt = makeLargeAlbumArtLayout(TransformImageArguments(corners: ImageCorners(radius: 4.0), imageSize: albumArtSize, boundingSize: albumArtSize, intrinsicInsets: UIEdgeInsets()))
++            let applyLargeAlbumArt = makeLargeAlbumArtLayout(TransformImageArguments(corners: ImageCorners(radius: 16.0), imageSize: albumArtSize, boundingSize: albumArtSize, intrinsicInsets: UIEdgeInsets()))
+             applyLargeAlbumArt()
+             
+             if animateIn {
+                 self.controlsNode.albumArtNode.alpha = 0.0
+-                
+-                let sourceFrame = self.controlsNode.albumArtNode.view.convert(self.controlsNode.albumArtNode.bounds, to: self.albumArtBackground.contentView)
++
++                // The large poster is its own top layer, so its flight is never
++                // hidden behind the blur or the transport controls.
++                self.isPosterFlightInProgress = true
++                // The tilt crosses the backdrop's z=0 plane at the poster's
++                // diagonal. Keep the whole tilted artwork in front of it.
++                self.albumArtNode.layer.zPosition = 8.0
++                self.contentNode.view.addSubview(self.albumArtNode.view)
++                let sourceFrame = self.controlsNode.albumArtNode.view.convert(self.controlsNode.albumArtNode.bounds, to: self.contentNode.view)
+                 ContainedViewLayoutTransition.animated(duration: 0.4, curve: .spring).animateFrame(node: self.albumArtNode, from: sourceFrame)
++                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
++                    guard let self else {
++                        return
++                    }
++                    self.isPosterFlightInProgress = false
++                    self.updatePosterTilt(isPlaying: self.controlsNode.isPlaying)
++                }
+                 UIView.animate(withDuration: 0.2, animations: {
+                     self.albumArtBackground.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .dark : .light)
++                    self.albumArtBackground.alpha = 1.0
+                 })
+             }
+         } else {
+-            self.controlsNode.albumArtNode.alpha = 1.0
+-            
+             if self.albumArtBackground.superview != nil {
+-                let fadeTransition = ComponentTransition(transition)
+-                fadeTransition.setBlur(layer: self.albumArtNode.layer, radius: 10.0)
+-                fadeTransition.setAlpha(layer: self.albumArtNode.layer, alpha: 0.0)
+-                
+-                UIView.animate(withDuration: 0.2, animations: {
+-                    self.albumArtBackground.effect = nil
+-                }, completion: { _ in
+-                    self.albumArtBackground.removeFromSuperview()
+-                    ComponentTransition.immediate.setBlur(layer: self.albumArtNode.layer, radius: 0.0)
+-                    ComponentTransition.immediate.setAlpha(layer: self.albumArtNode.layer, alpha: 1.0)
+-                })
++                if !self.isAnimatingAlbumArtBackToMiniPlayer {
++                    self.isAnimatingAlbumArtBackToMiniPlayer = true
++
++                    let miniAlbumArtFrame = self.controlsNode.albumArtNode.view.convert(
++                        self.controlsNode.albumArtNode.bounds,
++                        to: self.contentNode.view
++                    )
++                    self.controlsNode.albumArtNode.alpha = 0.0
++
++                    // Fly the expanded artwork back into the mini player's actual
++                    // artwork frame. Keep the mini artwork hidden until the landing
++                    // completes so the poster doesn't appear twice during the flight.
++                    UIView.animate(
++                        withDuration: 0.42,
++                        delay: 0.0,
++                        usingSpringWithDamping: 0.88,
++                        initialSpringVelocity: 0.0,
++                        options: [.beginFromCurrentState, .allowUserInteraction],
++                        animations: {
++                            self.albumArtNode.view.frame = miniAlbumArtFrame
++                            self.albumArtNode.layer.cornerRadius = 10.0
++                            self.albumArtNode.layer.masksToBounds = true
++                            self.albumArtBackground.effect = nil
++                            self.albumArtBackground.alpha = 0.0
++                        },
++                        completion: { [weak self] _ in
++                            guard let self else {
++                                return
++                            }
++                            self.albumArtBackground.removeFromSuperview()
++                            self.albumArtNode.view.removeFromSuperview()
++                            self.albumArtBackground.alpha = 1.0
++                            self.albumArtNode.layer.cornerRadius = 4.0
++                            self.albumArtNode.layer.masksToBounds = false
++                            self.albumArtNode.layer.removeAllAnimations()
++                            self.albumArtNode.layer.zPosition = 0.0
++                            self.controlsNode.albumArtNode.alpha = 1.0
++                            self.isAnimatingAlbumArtBackToMiniPlayer = false
++                            self.controlsNode.hasShadowlessBackground = false
++                            self.updatePosterTilt(isPlaying: false)
++                        }
++                    )
++                }
++            } else {
++                self.controlsNode.albumArtNode.alpha = 1.0
+             }
+         }
+         
+@@ -1162,6 +1279,12 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         if !self.bounds.contains(point) {
+             return nil
+         }
++        if self.albumArtNode.view.superview != nil {
++            let posterPoint = self.view.convert(point, to: self.albumArtNode.view)
++            if self.albumArtNode.bounds.contains(posterPoint) {
++                return self.albumArtNode.view
++            }
++        }
+         if self.albumArtBackground.superview == nil &&  point.y < self.historyFrameNode.frame.minY {
+             return self.dimNode.view
+         }
+@@ -1175,11 +1298,130 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     }
+     
+     @objc func albumArtTapped(_ recognizer: UITapGestureRecognizer) {
+-        if case .ended = recognizer.state, let layout = self.validLayout {
+-            self.currentAlbumArt = nil
+-            self.containerLayoutUpdated(layout, transition: .animated(duration: 0.3, curve: .easeInOut))
++        if case .ended = recognizer.state {
++            self.collapseAlbumArt()
+         }
+     }
++
++    private func updateAmbientGradient(animated: Bool) {
++        let (upper, lower) = self.ambientArtworkColors ?? (
++            UIColor(red: 0.35, green: 0.40, blue: 0.46, alpha: 1.0),
++            UIColor(red: 0.38, green: 0.43, blue: 0.48, alpha: 1.0)
++        )
++        let isDark = self.presentationData.theme.overallDarkAppearance
++        func posterHue(_ color: UIColor) -> (CGFloat, CGFloat) {
++            var hue: CGFloat = 0.0
++            var saturation: CGFloat = 0.0
++            var brightness: CGFloat = 0.0
++            var alpha: CGFloat = 0.0
++            color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
++            // A mostly black or grey cover still gets a cool, readable ambient tint.
++            return (saturation < 0.08 ? 0.62 : hue, max(0.78, saturation))
++        }
++        let top = posterHue(upper)
++        let bottom = posterHue(lower)
++        func stop(hue: CGFloat, saturation: CGFloat, brightness: CGFloat) -> CGColor {
++            return UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 0.96).cgColor
++        }
++        let colors: [CGColor] = isDark ? [
++            stop(hue: top.0, saturation: top.1, brightness: 0.24),
++            stop(hue: bottom.0, saturation: bottom.1 * 0.92, brightness: 0.42),
++            stop(hue: bottom.0, saturation: bottom.1 * 0.72, brightness: 0.29)
++        ] : [
++            stop(hue: top.0, saturation: top.1, brightness: 0.36),
++            stop(hue: bottom.0, saturation: bottom.1 * 0.92, brightness: 0.72),
++            stop(hue: bottom.0, saturation: 0.38, brightness: 0.96)
++        ]
++
++        let previousColors = self.ambientGradientLayer.presentation()?.colors ?? self.ambientGradientLayer.colors
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.ambientGradientLayer.colors = colors
++        CATransaction.commit()
++        if animated, let previousColors {
++            let animation = CABasicAnimation(keyPath: "colors")
++            animation.fromValue = previousColors
++            animation.toValue = colors
++            animation.duration = 0.5
++            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
++            self.ambientGradientLayer.add(animation, forKey: "ambientColors")
++        }
++    }
++
++    private func updatePosterTilt(isPlaying: Bool) {
++        let shouldTilt = isPlaying && !self.isPosterFlightInProgress && self.currentAlbumArt != nil && self.albumArtNode.view.superview != nil
++        guard shouldTilt != self.isPosterTiltActive else {
++            return
++        }
++        self.isPosterTiltActive = shouldTilt
++        self.posterMotionLink?.invalidate()
++        self.posterMotionLink = nil
++        self.posterMotionTarget = nil
++
++        guard shouldTilt else {
++            self.albumArtNode.layer.transform = CATransform3DIdentity
++            return
++        }
++
++        let target = AudioPosterMotionTarget(node: self)
++        let link = CADisplayLink(target: target, selector: #selector(AudioPosterMotionTarget.tick(_:)))
++        link.preferredFramesPerSecond = 30
++        link.add(to: .main, forMode: .common)
++        self.posterMotionTarget = target
++        self.posterMotionLink = link
++    }
++
++    fileprivate func updatePosterMotionFrame(timestamp: CFTimeInterval) {
++        guard self.isPosterTiltActive else {
++            return
++        }
++        let orbitPhase = timestamp * 2.0 * .pi / 2.0
++        let tiltPhase = timestamp * 2.0 * .pi / 2.0
++        let angle = sin(tiltPhase) * 0.5 * .pi / 180.0
++        let pulseInPoints = 0.45 + self.posterAudioLevel * 0.55
++        let scale = 1.0 + sin(timestamp * 2.0 * .pi / 0.5) * pulseInPoints / max(self.albumArtNode.bounds.width, 1.0)
++        var transform = CATransform3DIdentity
++        transform.m34 = -1.0 / (500.0 * 0.62)
++        transform = CATransform3DRotate(transform, angle, cos(orbitPhase), sin(orbitPhase), 0.0)
++        transform = CATransform3DScale(transform, scale, scale, 1.0)
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.albumArtNode.layer.transform = transform
++        CATransaction.commit()
++    }
++
++    private func collapseAlbumArt() {
++        guard self.currentAlbumArt != nil, let layout = self.validLayout else {
++            return
++        }
++        self.currentAlbumArt = nil
++        self.updatePosterTilt(isPlaying: false)
++        self.controlsNode.usesAmbientBackdrop = false
++        self.containerLayoutUpdated(layout, transition: .animated(duration: 0.3, curve: .easeInOut))
++    }
++
++    @objc private func largeAlbumArtPan(_ recognizer: UIPanGestureRecognizer) {
++        guard recognizer.state == .ended, self.currentAlbumArt != nil else {
++            return
++        }
++
++        let translation = recognizer.translation(in: self.albumArtNode.view)
++        let velocity = recognizer.velocity(in: self.albumArtNode.view)
++        let horizontalDistance = abs(translation.x)
++        let horizontalVelocity = abs(velocity.x)
++        if translation.y > 0.0,
++           translation.y > horizontalDistance * 1.2,
++           (translation.y > 48.0 || (translation.y > 24.0 && velocity.y > 500.0)) {
++            self.collapseAlbumArt()
++            return
++        }
++        guard horizontalDistance > 48.0 || (horizontalDistance > 24.0 && horizontalVelocity > 500.0),
++              horizontalDistance > abs(translation.y) * 1.2 else {
++            return
++        }
++
++        self.controlsNode.control?(translation.x < 0.0 ? .next : .previous)
++    }
+             
+     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+         if let recognizer = gestureRecognizer as? UIPanGestureRecognizer {
+@@ -1711,6 +1953,18 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     }
+ }
+ 
++private final class AudioPosterMotionTarget: NSObject {
++    weak var node: OverlayAudioPlayerControllerNode?
++
++    init(node: OverlayAudioPlayerControllerNode) {
++        self.node = node
++    }
++
++    @objc func tick(_ link: CADisplayLink) {
++        self.node?.updatePosterMotionFrame(timestamp: link.timestamp)
++    }
++}
++
+ private final class OverlayAudioPlayerContextExtractedContentSource: ContextExtractedContentSource {
+     let keepInPlace: Bool = false
+     let ignoreContentTouches: Bool = false
+@@ -1732,6 +1986,73 @@ private final class OverlayAudioPlayerContextExtractedContentSource: ContextExtr
+     }
+ }
+ 
++private func albumArtAmbientColors(_ image: UIImage) -> (UIColor, UIColor)? {
++    guard let source = image.cgImage else {
++        return nil
++    }
++    let side = 24
++    var pixels = [UInt8](repeating: 0, count: side * side * 4)
++    return pixels.withUnsafeMutableBytes { bytes -> (UIColor, UIColor)? in
++        guard let data = bytes.baseAddress,
++              let context = CGContext(data: data, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
++                                      space: CGColorSpaceCreateDeviceRGB(),
++                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else {
++            return nil
++        }
++        context.interpolationQuality = .low
++        context.draw(source, in: CGRect(x: 0.0, y: 0.0, width: CGFloat(side), height: CGFloat(side)))
++        let pixelData = bytes.bindMemory(to: UInt8.self)
++
++        var colored = [(Double, Double, Double, Double)](repeating: (0.0, 0.0, 0.0, 0.0), count: 2)
++        var neutral = [(Double, Double, Double, Double)](repeating: (0.0, 0.0, 0.0, 0.0), count: 2)
++        for index in 0 ..< side * side {
++            let offset = index * 4
++            if pixelData[offset + 3] < 128 {
++                continue
++            }
++            let red = Double(pixelData[offset]) / 255.0
++            let green = Double(pixelData[offset + 1]) / 255.0
++            let blue = Double(pixelData[offset + 2]) / 255.0
++            let maximum = max(red, max(green, blue))
++            let minimum = min(red, min(green, blue))
++            if maximum < 0.07 || minimum > 0.96 {
++                continue // Ignore letterbox black and the white placeholder.
++            }
++            let half = index / side < side / 2 ? 0 : 1
++            var plain = neutral[half]
++            plain.0 += red
++            plain.1 += green
++            plain.2 += blue
++            plain.3 += 1.0
++            neutral[half] = plain
++
++            let saturation = maximum - minimum
++            if saturation > 0.09 {
++                let weight = 0.2 + saturation * 2.0
++                var vivid = colored[half]
++                vivid.0 += red * weight
++                vivid.1 += green * weight
++                vivid.2 += blue * weight
++                vivid.3 += weight
++                colored[half] = vivid
++            }
++        }
++
++        func color(for half: Int) -> UIColor? {
++            let sample = colored[half].3 > 1.0 ? colored[half] : neutral[half]
++            guard sample.3 > 0.0 else {
++                return nil
++            }
++            return UIColor(red: CGFloat(sample.0 / sample.3), green: CGFloat(sample.1 / sample.3), blue: CGFloat(sample.2 / sample.3), alpha: 1.0)
++        }
++        guard let upper = color(for: 0) ?? color(for: 1),
++              let lower = color(for: 1) ?? color(for: 0) else {
++            return nil
++        }
++        return (upper, lower)
++    }
++}
++
+ private func generateCollapseIcon(theme: PresentationTheme) -> UIImage? {
+     return generateImage(CGSize(width: 36.0, height: 6.0), rotatedContext: { size, context in
+         let bounds = CGRect(origin: CGPoint(), size: size)
+diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
+index a8c266929a..2a3f419cab 100644
+--- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
++++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
+@@ -28,10 +28,12 @@ private func normalizeValue(_ value: CGFloat) -> CGFloat {
+     return round(value * 10.0) / 10.0
+ }
+ 
+-private func generateBackground(theme: PresentationTheme) -> UIImage? {
++private func generateBackground(theme: PresentationTheme, hasShadow: Bool = true) -> UIImage? {
+     return generateImage(CGSize(width: 20.0, height: 18.0), rotatedContext: { size, context in
+         context.clear(CGRect(origin: CGPoint(), size: size))
+-        context.setShadow(offset: CGSize(width: 0.0, height: -4.0), blur: 30.0, color: UIColor(white: 0.0, alpha: 0.2).cgColor)
++        if hasShadow {
++            context.setShadow(offset: CGSize(width: 0.0, height: -4.0), blur: 30.0, color: UIColor(white: 0.0, alpha: 0.2).cgColor)
++        }
+         context.setFillColor(theme.list.modalPlainBackgroundColor.cgColor)
+         context.fill(CGRect(origin: CGPoint(x: 0.0, y: 8.0), size: CGSize(width: 20.0, height: 20.0)))
+     })?.stretchableImage(withLeftCapWidth: 10, topCapHeight: 18)
+@@ -169,6 +171,10 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     private var previousRate: AudioPlaybackRate?
+     
+     private var currentIsPaused: Bool?
++    var isPlaying: Bool {
++        return !(self.currentIsPaused ?? true)
++    }
++    var playbackStateUpdated: ((Bool) -> Void)?
+     private let playPauseButton: IconButtonNode
+     private let playPauseIconNode: PlayPauseIconNode
+     
+@@ -185,13 +191,65 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     
+     var hasPlainBackground = false {
+         didSet {
+-            self.backgroundNode.image = self.hasPlainBackground ? generatePlainBackground(theme: self.presentationData.theme) : generateBackground(theme: self.presentationData.theme)
++            self.updateBackgroundImage()
++        }
++    }
++
++    var hasShadowlessBackground = false {
++        didSet {
++            self.updateBackgroundImage()
++        }
++    }
++
++    var usesAmbientBackdrop = false {
++        didSet {
++            guard self.usesAmbientBackdrop != oldValue else {
++                return
++            }
++            self.updateAmbientControlColors()
++            self.updateLabels(transition: .immediate)
+         }
+     }
++
++    private var secondaryContentColor: UIColor {
++        if self.usesAmbientBackdrop {
++            return self.presentationData.theme.overallDarkAppearance ? UIColor(white: 0.90, alpha: 1.0) : UIColor(white: 0.14, alpha: 1.0)
++        }
++        return self.presentationData.theme.list.itemSecondaryTextColor
++    }
++
++    private var scrubberBackgroundColor: UIColor {
++        if self.usesAmbientBackdrop {
++            return self.presentationData.theme.overallDarkAppearance ? UIColor.white.withAlphaComponent(0.55) : UIColor.black.withAlphaComponent(0.32)
++        }
++        return self.presentationData.theme.list.controlSecondaryColor.withMultipliedAlpha(0.5)
++    }
++
++    private func updateAmbientControlColors() {
++        self.leftDurationLabel.textColor = self.secondaryContentColor
++        self.rightDurationLabel.textColor = self.secondaryContentColor
++        self.scrubberNode.updateColors(backgroundColor: self.scrubberBackgroundColor, foregroundColor: self.presentationData.theme.list.itemPrimaryTextColor)
++        if let order = self.currentOrder {
++            self.updateOrderButton(order)
++        }
++        if let looping = self.currentLooping {
++            self.updateLoopButton(looping)
++        }
++        if let rate = self.currentRate {
++            self.updateRateButton(rate)
++        }
++    }
++
++    private func updateBackgroundImage() {
++        self.backgroundNode.image = self.hasPlainBackground
++            ? generatePlainBackground(theme: self.presentationData.theme)
++            : generateBackground(theme: self.presentationData.theme, hasShadow: !self.hasShadowlessBackground)
++    }
+         
+     var isExpanded = false
+     var updateIsExpanded: (() -> Void)?
+     var requestAlbumArtDisplay: (((FileMediaReference, SharedMediaPlaybackAlbumArt)?) -> Void)?
++    var updateAlbumArtDisplay: (((FileMediaReference, SharedMediaPlaybackAlbumArt)?) -> Void)?
+     
+     var requestCollapse: (() -> Void)?
+     var requestShare: ((ShareControllerSubject) -> Void)?
+@@ -396,6 +454,7 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+                     strongSelf.currentIsPaused = isPaused
+                     
+                     strongSelf.updatePlayPauseButton(paused: isPaused, animated: !isFirstTime)
++                    strongSelf.playbackStateUpdated?(!isPaused)
+                 }
+                 
+                 strongSelf.playPauseButton.isEnabled = true
+@@ -569,8 +628,17 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     
+     override func didLoad() {
+         super.didLoad()
+-        
+-        self.albumArtNode.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.albumArtTap(_:))))
++
++        let albumArtTapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.albumArtTap(_:)))
++        self.albumArtNode.view.addGestureRecognizer(albumArtTapGestureRecognizer)
++
++        // Match the standalone Music Player V2 interaction while keeping Telegram's
++        // playlist as the source of truth: horizontal artwork swipes navigate the
++        // active music playlist through the same controls as the transport buttons.
++        let albumArtPanGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(self.albumArtPan(_:)))
++        albumArtPanGestureRecognizer.cancelsTouchesInView = false
++        albumArtPanGestureRecognizer.require(toFail: albumArtTapGestureRecognizer)
++        self.albumArtNode.view.addGestureRecognizer(albumArtPanGestureRecognizer)
+         
+         let backwardLongPressGestureRecognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.seekBackwardLongPress(_:)))
+         backwardLongPressGestureRecognizer.minimumPressDuration = 0.3
+@@ -670,11 +738,9 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+         self.backwardButton.circleColor = presentationData.theme.list.controlSecondaryColor.withAlphaComponent(0.35)
+         self.forwardButton.circleColor = presentationData.theme.list.controlSecondaryColor.withAlphaComponent(0.35)
+         
+-        self.backgroundNode.image = self.hasPlainBackground ? generatePlainBackground(theme: presentationData.theme) : generateBackground(theme: presentationData.theme)
++        self.updateBackgroundImage()
+         self.shareNode.setImage(generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/Share"), color: presentationData.theme.list.itemPrimaryTextColor), for: [])
+-        self.scrubberNode.updateColors(backgroundColor: presentationData.theme.list.controlSecondaryColor.withMultipliedAlpha(0.5), foregroundColor: presentationData.theme.list.itemPrimaryTextColor)
+-        self.leftDurationLabel.textColor = presentationData.theme.list.itemSecondaryTextColor
+-        self.rightDurationLabel.textColor = presentationData.theme.list.itemSecondaryTextColor
++        self.updateAmbientControlColors()
+         self.backwardButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/Previous"), color: presentationData.theme.list.itemPrimaryTextColor)
+         self.forwardButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/Next"), color: presentationData.theme.list.itemPrimaryTextColor)
+         if let isPaused = self.currentIsPaused {
+@@ -704,15 +770,24 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+         let infoLabelsLeftInset: CGFloat = 53.0
+         let infoLabelsRightInset: CGFloat = 32.0
+         
+-        let infoVerticalOrigin: CGFloat = 21.0
+-        
+-        let (titleString, descriptionString, hasArtist, caption) = stringsForDisplayData(self.displayData, presentationData: self.presentationData)
++        // In the expanded state, leave the upper half of the blurred canvas
++        // for the flying artwork and place track metadata and transport controls
++        // below it, matching the donor player's composition.
++        let expandedControlsOffset: CGFloat = self.isExpanded ? 280.0 : 0.0
++        let infoVerticalOrigin: CGFloat = 21.0 + expandedControlsOffset
++
++        let (titleString, originalDescription, hasArtist, caption) = stringsForDisplayData(self.displayData, presentationData: self.presentationData)
++        let descriptionString = originalDescription.map { original -> NSAttributedString in
++            let result = NSMutableAttributedString(attributedString: original)
++            result.addAttribute(.foregroundColor, value: self.secondaryContentColor, range: NSRange(location: 0, length: result.length))
++            return result
++        }
+         
+         if self.previousCaption?.string != caption?.string {
+             self.previousCaption = caption
+             let chapters = caption.flatMap { parseMediaPlayerChapters($0) } ?? []
+             self.chaptersPromise.set(chapters)
+-            self.scrubberNode.updateContent(.standard(lineHeight: 7.0, lineCap: .round, scrubberHandle: .none, backgroundColor: self.presentationData.theme.list.controlSecondaryColor.withMultipliedAlpha(0.5), foregroundColor: self.presentationData.theme.list.itemPrimaryTextColor, bufferingColor: self.presentationData.theme.list.itemPrimaryTextColor.withAlphaComponent(0.4), chapters: chapters))
++            self.scrubberNode.updateContent(.standard(lineHeight: 7.0, lineCap: .round, scrubberHandle: .none, backgroundColor: self.scrubberBackgroundColor, foregroundColor: self.presentationData.theme.list.itemPrimaryTextColor, bufferingColor: self.presentationData.theme.list.itemPrimaryTextColor.withAlphaComponent(0.4), chapters: chapters))
+         }
+         
+         self.artistButton.isUserInteractionEnabled = hasArtist
+@@ -760,7 +835,9 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+             self.currentAlbumArtInitialized = true
+             self.currentAlbumArt = albumArt
+             self.albumArtNode.setSignal(playerAlbumArt(engine: self.engine, fileReference: self.currentFileReference, albumArt: albumArt, thumbnail: true))
+-            self.requestAlbumArtDisplay?(nil)
++            if let currentFileReference = self.currentFileReference, let albumArt {
++                self.updateAlbumArtDisplay?((currentFileReference, albumArt))
++            }
+         }
+     }
+     
+@@ -776,7 +853,7 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     private func updateOrderButton(_ order: MusicPlaybackSettingsOrder) {
+         switch order {
+             case .regular:
+-                self.orderButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/OrderReverse"), color: self.presentationData.theme.list.itemSecondaryTextColor)
++                self.orderButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/OrderReverse"), color: self.secondaryContentColor)
+             case .reversed:
+                 self.orderButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/OrderReverse"), color: self.presentationData.theme.list.itemAccentColor)
+             case .random:
+@@ -785,7 +862,7 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     }
+     
+     private func updateLoopButton(_ looping: MusicPlaybackSettingsLooping) {
+-        let baseColor = self.presentationData.theme.list.itemSecondaryTextColor
++        let baseColor = self.secondaryContentColor
+         switch looping {
+             case .none:
+                 self.loopingButton.icon = generateTintedImage(image: UIImage(bundleImageName: "GlobalMusicPlayer/Repeat"), color: baseColor)
+@@ -799,7 +876,7 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     private func updateRateButton(_ playbackBaseRate: AudioPlaybackRate) {
+         let rate = self.previousRate ?? playbackBaseRate
+         
+-        self.rateButton.setContent(.image(optionsRateImage(rate: rate.stringValue.uppercased(), color: self.presentationData.theme.list.itemSecondaryTextColor)))
++        self.rateButton.setContent(.image(optionsRateImage(rate: rate.stringValue.uppercased(), color: self.secondaryContentColor)))
+     }
+     
+     static let basePanelHeight: CGFloat = 190.0
+@@ -882,6 +959,8 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+         transition.updateFrame(node: self.rateButton, frame: CGRect(origin: CGPoint(x: width - sideInset - rightInset - rateRightOffset - 38.0, y: scrubberVerticalOrigin + 10.0 + rightLabelVerticalOffset - 6.0 + UIScreenPixel), size: CGSize(width: 24.0, height: 44.0)))
+         
+         transition.updateFrame(node: self.backgroundNode, frame: CGRect(origin: CGPoint(x: 0.0, y: -8.0), size: CGSize(width: width, height: finalPanelHeight + 8.0)))
++        // Let the same artwork-derived backdrop continue behind the controls.
++        transition.updateAlpha(node: self.backgroundNode, alpha: self.isExpanded || self.usesAmbientBackdrop ? 0.0 : 1.0)
+         
+         let buttonSize = CGSize(width: 64.0, height: 64.0)
+         let buttonsWidth = min(width - leftInset - rightInset - sideButtonsInset * 2.0, 320.0)
+@@ -1216,6 +1295,34 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+             }
+         }
+     }
++
++    @objc private func albumArtPan(_ recognizer: UIPanGestureRecognizer) {
++        guard self.isExpanded else {
++            return
++        }
++
++        guard recognizer.state == .ended else {
++            return
++        }
++
++        let translation = recognizer.translation(in: self.albumArtNode.view)
++        let velocity = recognizer.velocity(in: self.albumArtNode.view)
++        let horizontalDistance = abs(translation.x)
++        let horizontalVelocity = abs(velocity.x)
++
++        // Ignore vertical drags and small movements so artwork taps and the
++        // controller's vertical expand/collapse gesture remain unaffected.
++        guard horizontalDistance > 48.0 || (horizontalDistance > 24.0 && horizontalVelocity > 500.0),
++              horizontalDistance > abs(translation.y) * 1.2 else {
++            return
++        }
++
++        if translation.x < 0 {
++            self.control?(.next)
++        } else {
++            self.control?(.previous)
++        }
++    }
+     
+     @objc func artistPressed() {
+         let (_, descriptionString, _, _) = stringsForDisplayData(self.displayData, presentationData: self.presentationData)
+-- 
+2.44.0
+
+
+From 7cbfd8596e0be534921e512d52cb3c5da28a395c Mon Sep 17 00:00:00 2001
+From: col3name <mmikushov@instaloper.com>
+Date: Mon, 23 Nov 2026 21:42:04 +0300
+Subject: [PATCH 2/3] feat: ambient gradient
+
+---
+ .../OverlayAudioPlayerControllerNode.swift    | 203 +++++++++++-------
+ 1 file changed, 127 insertions(+), 76 deletions(-)
+
+diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+index 6e1a50d635..389d0111b4 100644
+--- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
++++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+@@ -65,7 +65,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     private var currentAlbumArt: (FileMediaReference, SharedMediaPlaybackAlbumArt)?
+     private let albumArtBackground: UIVisualEffectView
+     private let ambientGradientLayer = CAGradientLayer()
+-    private var ambientArtworkColors: (UIColor, UIColor)?
++    private let ambientGradientBlurView = UIVisualEffectView()
++    private let outerAmbientGradientLayer = CAGradientLayer()
++    private var ambientArtworkColors: [UIColor]?
+     private let albumArtNode = TransformImageNode()
+     private var isAnimatingAlbumArtBackToMiniPlayer = false
+     private var isPosterFlightInProgress = false
+@@ -383,10 +385,15 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         
+         super.init()
+ 
+-        self.ambientGradientLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
+-        self.ambientGradientLayer.endPoint = CGPoint(x: 0.5, y: 1.0)
+-        self.ambientGradientLayer.locations = [0.0, 0.52, 1.0]
++        for layer in [self.ambientGradientLayer, self.outerAmbientGradientLayer] {
++            layer.startPoint = CGPoint(x: 0.5, y: 0.0)
++            layer.endPoint = CGPoint(x: 0.5, y: 1.0)
++            layer.locations = [0.0, 0.29, 0.66, 1.0]
++        }
++        self.outerAmbientGradientLayer.opacity = 0.0
+         self.albumArtBackground.contentView.layer.insertSublayer(self.ambientGradientLayer, at: 0)
++        self.ambientGradientBlurView.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
++        self.ambientGradientBlurView.isUserInteractionEnabled = false
+         self.updateAmbientGradient(animated: false)
+         self.albumArtNode.imageUpdated = { [weak self] image in
+             guard let self, self.currentAlbumArt != nil, let image else {
+@@ -529,6 +536,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         
+         self.addSubnode(self.dimNode)
+         self.addSubnode(self.containerContainingNode)
++        self.layer.insertSublayer(self.outerAmbientGradientLayer, below: self.containerContainingNode.layer)
+         self.containerContainingNode.addSubnode(self.contentNode)
+         self.contentNode.addSubnode(self.historyBackgroundNode)
+         self.contentNode.addSubnode(self.historyNode)
+@@ -798,6 +806,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.historyFrameRightOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopMaskNode.image = generateCornersImage(theme: self.presentationData.theme)
++        self.ambientGradientBlurView.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
+         self.updateAmbientGradient(animated: false)
+         
+         self.collapseNode.setImage(generateCollapseIcon(theme: self.presentationData.theme), for: [])
+@@ -1016,6 +1025,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         transition.updateFrame(node: self.dimNode, frame: CGRect(origin: CGPoint(), size: layout.size))
+         transition.updateFrameAsPositionAndBounds(node: self.containerContainingNode, frame: CGRect(origin: CGPoint(), size: layout.size))
+         transition.updateFrame(node: self.contentNode, frame: CGRect(origin: CGPoint(), size: layout.size))
++        self.outerAmbientGradientLayer.frame = CGRect(origin: .zero, size: layout.size)
+         
+         // The bottom controls panel spans iPhone Duo's side strip; it keeps clear only of a corner block at the bottom.
+         // Equal insets keep the controls across the full width, as before.
+@@ -1154,6 +1164,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         
+         self.albumArtBackground.frame = CGRect(origin: .zero, size: layout.size)
+         self.ambientGradientLayer.frame = self.albumArtBackground.bounds
++        self.ambientGradientBlurView.frame = CGRect(origin: .zero, size: layout.size)
+         
+         if let _ = self.currentAlbumArt {
+             var animateIn = false
+@@ -1163,6 +1174,9 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+                 // blurred or intercepted the expanded player's transport buttons.
+                 self.albumArtBackground.alpha = 0.0
+                 self.contentNode.view.insertSubview(self.albumArtBackground, belowSubview: self.controlsNode.view)
++                self.ambientGradientBlurView.alpha = 0.0
++                self.contentNode.view.insertSubview(self.ambientGradientBlurView, belowSubview: self.controlsNode.view)
++                self.setOuterAmbientVisible(true)
+                 animateIn = true
+             }
+             // iPhone Duo: beside a side strip the cover keeps to the band between the side insets (in folded portrait it
+@@ -1201,6 +1215,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+                 UIView.animate(withDuration: 0.2, animations: {
+                     self.albumArtBackground.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .dark : .light)
+                     self.albumArtBackground.alpha = 1.0
++                    self.ambientGradientBlurView.alpha = 1.0
+                 })
+             }
+         } else {
+@@ -1229,12 +1244,15 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+                             self.albumArtNode.layer.masksToBounds = true
+                             self.albumArtBackground.effect = nil
+                             self.albumArtBackground.alpha = 0.0
++                            self.ambientGradientBlurView.alpha = 0.0
+                         },
+                         completion: { [weak self] _ in
+                             guard let self else {
+                                 return
+                             }
+                             self.albumArtBackground.removeFromSuperview()
++                            self.ambientGradientBlurView.removeFromSuperview()
++                            self.setOuterAmbientVisible(false)
+                             self.albumArtNode.view.removeFromSuperview()
+                             self.albumArtBackground.alpha = 1.0
+                             self.albumArtNode.layer.cornerRadius = 4.0
+@@ -1303,48 +1321,61 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         }
+     }
+ 
++    private func setOuterAmbientVisible(_ visible: Bool) {
++        let opacity: Float = visible ? 1.0 : 0.0
++        guard self.outerAmbientGradientLayer.opacity != opacity else {
++            return
++        }
++        let previousOpacity = self.outerAmbientGradientLayer.presentation()?.opacity ?? self.outerAmbientGradientLayer.opacity
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.outerAmbientGradientLayer.opacity = opacity
++        CATransaction.commit()
++        let animation = CABasicAnimation(keyPath: "opacity")
++        animation.fromValue = previousOpacity
++        animation.toValue = opacity
++        animation.duration = 0.2
++        self.outerAmbientGradientLayer.add(animation, forKey: "ambientVisibility")
++    }
++
+     private func updateAmbientGradient(animated: Bool) {
+-        let (upper, lower) = self.ambientArtworkColors ?? (
+-            UIColor(red: 0.35, green: 0.40, blue: 0.46, alpha: 1.0),
+-            UIColor(red: 0.38, green: 0.43, blue: 0.48, alpha: 1.0)
+-        )
++        let palette = self.ambientArtworkColors ?? [
++            UIColor(red: 0.28, green: 0.32, blue: 0.35, alpha: 1.0),
++            UIColor(red: 0.38, green: 0.42, blue: 0.44, alpha: 1.0),
++            UIColor(red: 0.48, green: 0.51, blue: 0.53, alpha: 1.0),
++            UIColor(red: 0.58, green: 0.60, blue: 0.62, alpha: 1.0)
++        ]
+         let isDark = self.presentationData.theme.overallDarkAppearance
+-        func posterHue(_ color: UIColor) -> (CGFloat, CGFloat) {
+-            var hue: CGFloat = 0.0
+-            var saturation: CGFloat = 0.0
+-            var brightness: CGFloat = 0.0
++        func softened(_ color: UIColor, index: Int) -> CGColor {
++            var red: CGFloat = 0.0
++            var green: CGFloat = 0.0
++            var blue: CGFloat = 0.0
+             var alpha: CGFloat = 0.0
+-            color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+-            // A mostly black or grey cover still gets a cool, readable ambient tint.
+-            return (saturation < 0.08 ? 0.62 : hue, max(0.78, saturation))
+-        }
+-        let top = posterHue(upper)
+-        let bottom = posterHue(lower)
+-        func stop(hue: CGFloat, saturation: CGFloat, brightness: CGFloat) -> CGColor {
+-            return UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 0.96).cgColor
+-        }
+-        let colors: [CGColor] = isDark ? [
+-            stop(hue: top.0, saturation: top.1, brightness: 0.24),
+-            stop(hue: bottom.0, saturation: bottom.1 * 0.92, brightness: 0.42),
+-            stop(hue: bottom.0, saturation: bottom.1 * 0.72, brightness: 0.29)
+-        ] : [
+-            stop(hue: top.0, saturation: top.1, brightness: 0.36),
+-            stop(hue: bottom.0, saturation: bottom.1 * 0.92, brightness: 0.72),
+-            stop(hue: bottom.0, saturation: 0.38, brightness: 0.96)
+-        ]
++            color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
++            let mix: CGFloat = isDark ? 0.27 : [0.12, 0.19, 0.29, 0.43][index]
++            let target: CGFloat = isDark ? 0.0 : 1.0
++            return UIColor(red: red + (target - red) * mix,
++                           green: green + (target - green) * mix,
++                           blue: blue + (target - blue) * mix,
++                           alpha: [0.88, 0.82, 0.79, 0.85][index]).cgColor
++        }
++        let colors = palette.enumerated().map { softened($0.element, index: $0.offset) }
+ 
+-        let previousColors = self.ambientGradientLayer.presentation()?.colors ?? self.ambientGradientLayer.colors
+-        CATransaction.begin()
+-        CATransaction.setDisableActions(true)
+-        self.ambientGradientLayer.colors = colors
+-        CATransaction.commit()
+-        if animated, let previousColors {
+-            let animation = CABasicAnimation(keyPath: "colors")
+-            animation.fromValue = previousColors
+-            animation.toValue = colors
+-            animation.duration = 0.5
+-            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+-            self.ambientGradientLayer.add(animation, forKey: "ambientColors")
++        for layer in [self.ambientGradientLayer, self.outerAmbientGradientLayer] {
++            let previousColors = layer.presentation()?.colors ?? layer.colors
++            CATransaction.begin()
++            CATransaction.setDisableActions(true)
++            layer.backgroundColor = self.presentationData.theme.list.modalPlainBackgroundColor.cgColor
++            layer.colors = colors
++            CATransaction.commit()
++            if animated, let previousColors {
++                let animation = CABasicAnimation(keyPath: "colors")
++                animation.fromValue = previousColors
++                animation.toValue = colors
++                animation.duration = 0.5
++                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
++                layer.add(animation, forKey: "ambientColors")
++            }
+         }
+     }
+ 
+@@ -1986,13 +2017,13 @@ private final class OverlayAudioPlayerContextExtractedContentSource: ContextExtr
+     }
+ }
+ 
+-private func albumArtAmbientColors(_ image: UIImage) -> (UIColor, UIColor)? {
++private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+     guard let source = image.cgImage else {
+         return nil
+     }
+-    let side = 24
++    let side = 32
+     var pixels = [UInt8](repeating: 0, count: side * side * 4)
+-    return pixels.withUnsafeMutableBytes { bytes -> (UIColor, UIColor)? in
++    return pixels.withUnsafeMutableBytes { bytes -> [UIColor]? in
+         guard let data = bytes.baseAddress,
+               let context = CGContext(data: data, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                       space: CGColorSpaceCreateDeviceRGB(),
+@@ -2003,8 +2034,10 @@ private func albumArtAmbientColors(_ image: UIImage) -> (UIColor, UIColor)? {
+         context.draw(source, in: CGRect(x: 0.0, y: 0.0, width: CGFloat(side), height: CGFloat(side)))
+         let pixelData = bytes.bindMemory(to: UInt8.self)
+ 
+-        var colored = [(Double, Double, Double, Double)](repeating: (0.0, 0.0, 0.0, 0.0), count: 2)
+-        var neutral = [(Double, Double, Double, Double)](repeating: (0.0, 0.0, 0.0, 0.0), count: 2)
++        // Group the cover by hue, saturation and lightness. This keeps muted
++        // poster colors instead of assigning a saturated fallback hue to greys.
++        var buckets = [(red: Double, green: Double, blue: Double, weight: Double)](
++            repeating: (0.0, 0.0, 0.0, 0.0), count: 8 * 3 * 3)
+         for index in 0 ..< side * side {
+             let offset = index * 4
+             if pixelData[offset + 3] < 128 {
+@@ -2015,41 +2048,59 @@ private func albumArtAmbientColors(_ image: UIImage) -> (UIColor, UIColor)? {
+             let blue = Double(pixelData[offset + 2]) / 255.0
+             let maximum = max(red, max(green, blue))
+             let minimum = min(red, min(green, blue))
+-            if maximum < 0.07 || minimum > 0.96 {
+-                continue // Ignore letterbox black and the white placeholder.
+-            }
+-            let half = index / side < side / 2 ? 0 : 1
+-            var plain = neutral[half]
+-            plain.0 += red
+-            plain.1 += green
+-            plain.2 += blue
+-            plain.3 += 1.0
+-            neutral[half] = plain
+-
+-            let saturation = maximum - minimum
+-            if saturation > 0.09 {
+-                let weight = 0.2 + saturation * 2.0
+-                var vivid = colored[half]
+-                vivid.0 += red * weight
+-                vivid.1 += green * weight
+-                vivid.2 += blue * weight
+-                vivid.3 += weight
+-                colored[half] = vivid
++            if maximum < 0.05 || minimum > 0.97 {
++                continue
+             }
++            let delta = maximum - minimum
++            let saturation = maximum > 0.0 ? delta / maximum : 0.0
++            let hue: Double
++            if delta < 0.001 {
++                hue = 0.0
++            } else if maximum == red {
++                hue = (green - blue) / delta / 6.0
++            } else if maximum == green {
++                hue = ((blue - red) / delta + 2.0) / 6.0
++            } else {
++                hue = ((red - green) / delta + 4.0) / 6.0
++            }
++            let hueBin = saturation < 0.12 ? 0 : min(7, Int((hue - floor(hue)) * 8.0))
++            let saturationBin = min(2, Int(saturation * 3.0))
++            let brightnessBin = min(2, Int(maximum * 3.0))
++            let bucketIndex = (hueBin * 3 + saturationBin) * 3 + brightnessBin
++            let weight = 0.5 + saturation * 1.5
++            buckets[bucketIndex].red += red * weight
++            buckets[bucketIndex].green += green * weight
++            buckets[bucketIndex].blue += blue * weight
++            buckets[bucketIndex].weight += weight
+         }
+ 
+-        func color(for half: Int) -> UIColor? {
+-            let sample = colored[half].3 > 1.0 ? colored[half] : neutral[half]
+-            guard sample.3 > 0.0 else {
+-                return nil
++        let ranked = buckets.filter { $0.weight > 0.0 }.sorted { $0.weight > $1.weight }
++        guard !ranked.isEmpty else {
++            return nil
++        }
++        var selected = [(Double, Double, Double)]()
++        for sample in ranked {
++            let color = (sample.red / sample.weight, sample.green / sample.weight, sample.blue / sample.weight)
++            let isDistinct = selected.allSatisfy { other in
++                let difference = pow(color.0 - other.0, 2.0) + pow(color.1 - other.1, 2.0) + pow(color.2 - other.2, 2.0)
++                return difference > 0.025
++            }
++            if isDistinct {
++                selected.append(color)
++            }
++            if selected.count == 4 {
++                break
+             }
+-            return UIColor(red: CGFloat(sample.0 / sample.3), green: CGFloat(sample.1 / sample.3), blue: CGFloat(sample.2 / sample.3), alpha: 1.0)
+         }
+-        guard let upper = color(for: 0) ?? color(for: 1),
+-              let lower = color(for: 1) ?? color(for: 0) else {
+-            return nil
++        while selected.count < 4 {
++            selected.append(selected[0])
++        }
++        selected.sort {
++            0.2126 * $0.0 + 0.7152 * $0.1 + 0.0722 * $0.2 < 0.2126 * $1.0 + 0.7152 * $1.1 + 0.0722 * $1.2
++        }
++        return selected.map {
++            UIColor(red: CGFloat($0.0), green: CGFloat($0.1), blue: CGFloat($0.2), alpha: 1.0)
+         }
+-        return (upper, lower)
+     }
+ }
+ 
+-- 
+2.44.0
+
+
+From d297b78674e91891ed5e948dc8c676e8071fdb83 Mon Sep 17 00:00:00 2001
+From: col3name <mmikushov@instaloper.com>
+Date: Mon, 23 Nov 2026 22:16:53 +0300
+Subject: [PATCH 3/3] feat: animate text of author and song title, dark
+ gradient
+
+---
+ MODULE.bazel.lock                             |  6 ++-
+ .../OverlayAudioPlayerControllerNode.swift    | 50 ++++++++++++++-----
+ .../OverlayAudioPlayerControlsNode.swift      | 39 +++++++++++++--
+ 3 files changed, 77 insertions(+), 18 deletions(-)
+
+diff --git a/MODULE.bazel.lock b/MODULE.bazel.lock
+index 865568cd75..04afe0726b 100644
+--- a/MODULE.bazel.lock
++++ b/MODULE.bazel.lock
+@@ -141,7 +141,8 @@
+     "https://bcr.bazel.build/modules/rules_cc/0.2.16/MODULE.bazel": "9242fa89f950c6ef7702801ab53922e99c69b02310c39fb6e62b2bd30df2a1d4",
+     "https://bcr.bazel.build/modules/rules_cc/0.2.17/MODULE.bazel": "1849602c86cb60da8613d2de887f9566a6d354a6df6d7009f9d04a14402f9a84",
+     "https://bcr.bazel.build/modules/rules_cc/0.2.20/MODULE.bazel": "f5c07bce5ddcb99be21a0812ff5aadb439e688b7449c6542152363b2fd859c1a",
+-    "https://bcr.bazel.build/modules/rules_cc/0.2.20/source.json": "1155433dc6b8161bc339ce94095b337ed95feb1f048b014e10b62339d4b4239c",
++    "https://bcr.bazel.build/modules/rules_cc/0.2.26/MODULE.bazel": "a9f7b7f4a52747910965bddb1f58fc1fef50604ed1980ebdd16ea6f446d92249",
++    "https://bcr.bazel.build/modules/rules_cc/0.2.26/source.json": "bf9ff315da6055c1e374d627012cc51947a05b3560674af7d69fbedbb4fde6ef",
+     "https://bcr.bazel.build/modules/rules_cc/0.2.4/MODULE.bazel": "1ff1223dfd24f3ecf8f028446d4a27608aa43c3f41e346d22838a4223980b8cc",
+     "https://bcr.bazel.build/modules/rules_cc/0.2.8/MODULE.bazel": "f1df20f0bf22c28192a794f29b501ee2018fa37a3862a1a2132ae2940a23a642",
+     "https://bcr.bazel.build/modules/rules_foreign_cc/0.9.0/MODULE.bazel": "c9e8c682bf75b0e7c704166d79b599f93b72cfca5ad7477df596947891feeef6",
+@@ -487,7 +488,7 @@
+     },
+     "@@rules_rust+//crate_universe:extensions.bzl%crate": {
+       "general": {
+-        "bzlTransitiveDigest": "MPVNXlv2DHXqaOon9nYb5ymdGg8asheKXU+xuNs1lgQ=",
++        "bzlTransitiveDigest": "aNa8g4XarFabemK09xycwgUnl10DwVq7ftpZX0rxV/I=",
+         "usagesDigest": "XP8gfiEDmglVlgiIkJlvBxyBVrVG9NfZJX6mHiuuiw0=",
+         "recordedInputs": [
+           "ENV:CARGO_BAZEL_DEBUG \\0",
+@@ -500,6 +501,7 @@
+           "ENV:REPIN \\0",
+           "REPO_MAPPING:bazel_features+,bazel_features_globals bazel_features++version_extension+bazel_features_globals",
+           "REPO_MAPPING:bazel_features+,bazel_features_version bazel_features++version_extension+bazel_features_version",
++          "REPO_MAPPING:rules_cc+,bazel_features bazel_features+",
+           "REPO_MAPPING:rules_cc+,bazel_skylib bazel_skylib+",
+           "REPO_MAPPING:rules_cc+,bazel_tools bazel_tools",
+           "REPO_MAPPING:rules_cc+,cc_compatibility_proxy rules_cc++compatibility_proxy+cc_compatibility_proxy",
+diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+index 389d0111b4..fd488fb549 100644
+--- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
++++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControllerNode.swift
+@@ -68,6 +68,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+     private let ambientGradientBlurView = UIVisualEffectView()
+     private let outerAmbientGradientLayer = CAGradientLayer()
+     private var ambientArtworkColors: [UIColor]?
++    private var ambientBlurOpacity: CGFloat = 0.85
+     private let albumArtNode = TransformImageNode()
+     private var isAnimatingAlbumArtBackToMiniPlayer = false
+     private var isPosterFlightInProgress = false
+@@ -392,7 +393,6 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         }
+         self.outerAmbientGradientLayer.opacity = 0.0
+         self.albumArtBackground.contentView.layer.insertSublayer(self.ambientGradientLayer, at: 0)
+-        self.ambientGradientBlurView.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
+         self.ambientGradientBlurView.isUserInteractionEnabled = false
+         self.updateAmbientGradient(animated: false)
+         self.albumArtNode.imageUpdated = { [weak self] image in
+@@ -457,6 +457,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             if fileReferenceAndAlbumArt != nil {
+                 self.controlsNode.hasShadowlessBackground = true
+                 self.controlsNode.usesAmbientBackdrop = true
++                self.controlsNode.setArtworkExpanded(true, animated: true)
+             }
+             
+             if let (fileReference, albumArt) = fileReferenceAndAlbumArt {
+@@ -806,7 +807,6 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.historyFrameRightOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopOverlayNode.backgroundColor = self.hasAnyHistoryMessages == true ? self.presentationData.theme.list.modalBlocksBackgroundColor : self.presentationData.theme.list.modalPlainBackgroundColor
+         self.historyFrameTopMaskNode.image = generateCornersImage(theme: self.presentationData.theme)
+-        self.ambientGradientBlurView.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
+         self.updateAmbientGradient(animated: false)
+         
+         self.collapseNode.setImage(generateCollapseIcon(theme: self.presentationData.theme), for: [])
+@@ -1215,7 +1215,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+                 UIView.animate(withDuration: 0.2, animations: {
+                     self.albumArtBackground.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .dark : .light)
+                     self.albumArtBackground.alpha = 1.0
+-                    self.ambientGradientBlurView.alpha = 1.0
++                    self.ambientGradientBlurView.alpha = self.ambientBlurOpacity
+                 })
+             }
+         } else {
+@@ -1346,26 +1346,47 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+             UIColor(red: 0.58, green: 0.60, blue: 0.62, alpha: 1.0)
+         ]
+         let isDark = self.presentationData.theme.overallDarkAppearance
++        func luminance(_ color: UIColor) -> CGFloat {
++            var red: CGFloat = 0.0
++            var green: CGFloat = 0.0
++            var blue: CGFloat = 0.0
++            var alpha: CGFloat = 0.0
++            color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
++            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
++        }
++        let isDarkArtwork = luminance(palette[0]) < 0.12 && luminance(palette[1]) < 0.32
++        // Place the darkest shade behind the cover; leave the lower controls
++        // light enough for their dark icons in the light theme.
++        let orderedPalette = isDarkArtwork ? [palette[1], palette[0], palette[2], palette[3]] : palette
+         func softened(_ color: UIColor, index: Int) -> CGColor {
+             var red: CGFloat = 0.0
+             var green: CGFloat = 0.0
+             var blue: CGFloat = 0.0
+             var alpha: CGFloat = 0.0
+             color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+-            let mix: CGFloat = isDark ? 0.27 : [0.12, 0.19, 0.29, 0.43][index]
+-            let target: CGFloat = isDark ? 0.0 : 1.0
++            let mix: CGFloat = isDarkArtwork
++                ? (isDark ? [0.04, 0.0, 0.10, 0.18][index] : [0.45, 0.0, 0.26, 0.72][index])
++                : (isDark ? 0.27 : [0.12, 0.19, 0.29, 0.43][index])
++            let target: CGFloat = isDarkArtwork ? 1.0 : (isDark ? 0.0 : 1.0)
+             return UIColor(red: red + (target - red) * mix,
+                            green: green + (target - green) * mix,
+                            blue: blue + (target - blue) * mix,
+-                           alpha: [0.88, 0.82, 0.79, 0.85][index]).cgColor
++                           alpha: isDarkArtwork ? 1.0 : [0.88, 0.82, 0.79, 0.85][index]).cgColor
++        }
++        let colors = orderedPalette.enumerated().map { softened($0.element, index: $0.offset) }
++        self.ambientGradientBlurView.effect = UIBlurEffect(style: isDark || isDarkArtwork ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight)
++        self.ambientBlurOpacity = isDarkArtwork ? 0.35 : 0.85
++        if self.ambientGradientBlurView.superview != nil, self.currentAlbumArt != nil {
++            UIView.animate(withDuration: animated ? 0.5 : 0.0) {
++                self.ambientGradientBlurView.alpha = self.ambientBlurOpacity
++            }
+         }
+-        let colors = palette.enumerated().map { softened($0.element, index: $0.offset) }
+ 
+         for layer in [self.ambientGradientLayer, self.outerAmbientGradientLayer] {
+             let previousColors = layer.presentation()?.colors ?? layer.colors
+             CATransaction.begin()
+             CATransaction.setDisableActions(true)
+-            layer.backgroundColor = self.presentationData.theme.list.modalPlainBackgroundColor.cgColor
++            layer.backgroundColor = (isDarkArtwork ? palette[0] : self.presentationData.theme.list.modalPlainBackgroundColor).cgColor
+             layer.colors = colors
+             CATransaction.commit()
+             if animated, let previousColors {
+@@ -1428,6 +1449,7 @@ final class OverlayAudioPlayerControllerNode: ViewControllerTracingNode, ASGestu
+         self.currentAlbumArt = nil
+         self.updatePosterTilt(isPlaying: false)
+         self.controlsNode.usesAmbientBackdrop = false
++        self.controlsNode.setArtworkExpanded(false, animated: true)
+         self.containerLayoutUpdated(layout, transition: .animated(duration: 0.3, curve: .easeInOut))
+     }
+ 
+@@ -2037,7 +2059,7 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+         // Group the cover by hue, saturation and lightness. This keeps muted
+         // poster colors instead of assigning a saturated fallback hue to greys.
+         var buckets = [(red: Double, green: Double, blue: Double, weight: Double)](
+-            repeating: (0.0, 0.0, 0.0, 0.0), count: 8 * 3 * 3)
++            repeating: (0.0, 0.0, 0.0, 0.0), count: 8 * 3 * 4)
+         for index in 0 ..< side * side {
+             let offset = index * 4
+             if pixelData[offset + 3] < 128 {
+@@ -2048,7 +2070,7 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+             let blue = Double(pixelData[offset + 2]) / 255.0
+             let maximum = max(red, max(green, blue))
+             let minimum = min(red, min(green, blue))
+-            if maximum < 0.05 || minimum > 0.97 {
++            if minimum > 0.97 {
+                 continue
+             }
+             let delta = maximum - minimum
+@@ -2065,8 +2087,8 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+             }
+             let hueBin = saturation < 0.12 ? 0 : min(7, Int((hue - floor(hue)) * 8.0))
+             let saturationBin = min(2, Int(saturation * 3.0))
+-            let brightnessBin = min(2, Int(maximum * 3.0))
+-            let bucketIndex = (hueBin * 3 + saturationBin) * 3 + brightnessBin
++            let brightnessBin = maximum < 0.09 ? 0 : maximum < 0.25 ? 1 : maximum < 0.55 ? 2 : 3
++            let bucketIndex = (hueBin * 3 + saturationBin) * 4 + brightnessBin
+             let weight = 0.5 + saturation * 1.5
+             buckets[bucketIndex].red += red * weight
+             buckets[bucketIndex].green += green * weight
+@@ -2083,7 +2105,9 @@ private func albumArtAmbientColors(_ image: UIImage) -> [UIColor]? {
+             let color = (sample.red / sample.weight, sample.green / sample.weight, sample.blue / sample.weight)
+             let isDistinct = selected.allSatisfy { other in
+                 let difference = pow(color.0 - other.0, 2.0) + pow(color.1 - other.1, 2.0) + pow(color.2 - other.2, 2.0)
+-                return difference > 0.025
++                // Keep black and nearby charcoal tones as separate palette entries.
++                let bothDark = max(max(color.0, max(color.1, color.2)), max(other.0, max(other.1, other.2))) < 0.25
++                return difference > (bothDark ? 0.006 : 0.025)
+             }
+             if isDistinct {
+                 selected.append(color)
+diff --git a/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift b/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
+index 2a3f419cab..9ff790f834 100644
+--- a/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
++++ b/submodules/TelegramUI/Sources/OverlayAudioPlayerControlsNode.swift
+@@ -247,6 +247,7 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+     }
+         
+     var isExpanded = false
++    private var isArtworkExpanded = false
+     var updateIsExpanded: (() -> Void)?
+     var requestAlbumArtDisplay: (((FileMediaReference, SharedMediaPlaybackAlbumArt)?) -> Void)?
+     var updateAlbumArtDisplay: (((FileMediaReference, SharedMediaPlaybackAlbumArt)?) -> Void)?
+@@ -803,20 +804,21 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+             environment: {},
+             containerSize: CGSize(width: width - sideInset * 2.0 - leftInset - rightInset - infoLabelsLeftInset - infoLabelsRightInset, height: CGFloat.greatestFiniteMagnitude)
+         )
++        let centerTrackInfo = self.isExpanded || self.isArtworkExpanded
+         if let titleView = self.title.view {
+             if titleView.superview == nil {
+                 self.view.addSubview(titleView)
+             }
+-            transition.updateFrame(view: titleView, frame: CGRect(origin: CGPoint(x: self.isExpanded ? floor((width - titleSize.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin), size: titleSize))
++            transition.updateFrame(view: titleView, frame: CGRect(origin: CGPoint(x: centerTrackInfo ? floor((width - titleSize.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin), size: titleSize))
+         }
+         
+         let makeDescriptionLayout = TextNode.asyncLayout(self.descriptionNode)
+         let (descriptionLayout, descriptionApply) = makeDescriptionLayout(TextNodeLayoutArguments(attributedString: descriptionString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: width - sideInset * 2.0 - leftInset - rightInset - infoLabelsLeftInset - infoLabelsRightInset, height: CGFloat.greatestFiniteMagnitude), alignment: .left, lineSpacing: 0.0, cutout: nil, insets: UIEdgeInsets()))
+         
+-        transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: self.isExpanded ? floor((width - titleLayout.size.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin + 1.0), size: titleLayout.size))
++        transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: centerTrackInfo ? floor((width - titleLayout.size.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin + 1.0), size: titleLayout.size))
+         let _ = titleApply()
+         
+-        let descriptionFrame = CGRect(origin: CGPoint(x: self.isExpanded ? floor((width - descriptionLayout.size.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin + 24.0), size: descriptionLayout.size)
++        let descriptionFrame = CGRect(origin: CGPoint(x: centerTrackInfo ? floor((width - descriptionLayout.size.width) / 2.0) : (leftInset + sideInset + infoLabelsLeftInset), y: infoVerticalOrigin + 24.0), size: descriptionLayout.size)
+         transition.updateFrame(node: self.descriptionNode, frame: descriptionFrame)
+         let _ = descriptionApply()
+         
+@@ -840,6 +842,37 @@ final class OverlayAudioPlayerControlsNode: ASDisplayNode {
+             }
+         }
+     }
++
++    func setArtworkExpanded(_ expanded: Bool, animated: Bool) {
++        guard self.isArtworkExpanded != expanded else {
++            return
++        }
++        let titleLayer = self.title.view?.layer
++        let titleFromX = titleLayer?.presentation()?.position.x ?? titleLayer?.position.x
++        let descriptionFromX = self.descriptionNode.layer.presentation()?.position.x ?? self.descriptionNode.layer.position.x
++        let artistButtonFromX = self.artistButton.layer.presentation()?.position.x ?? self.artistButton.layer.position.x
++
++        self.isArtworkExpanded = expanded
++        self.updateLabels(transition: .immediate)
++
++        guard animated else {
++            return
++        }
++        func animateHorizontal(_ layer: CALayer?, from startX: CGFloat?) {
++            guard let layer, let startX, abs(layer.position.x - startX) > 0.5 else {
++                return
++            }
++            let animation = CABasicAnimation(keyPath: "position.x")
++            animation.fromValue = startX
++            animation.toValue = layer.position.x
++            animation.duration = 0.42
++            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
++            layer.add(animation, forKey: "trackInfoHorizontalPosition")
++        }
++        animateHorizontal(titleLayer, from: titleFromX)
++        animateHorizontal(self.descriptionNode.layer, from: descriptionFromX)
++        animateHorizontal(self.artistButton.layer, from: artistButtonFromX)
++    }
+     
+     private func updatePlayPauseButton(paused: Bool, animated: Bool) {
+         self.playPauseIconNode.customColor = self.presentationData.theme.list.itemPrimaryTextColor
+-- 
+2.44.0
+

@@ -1,5 +1,17 @@
 # Music Player V2
 
+## 1. How apply to telegram-ios source code
+```
+# clone telegram-ios https://github.com/TelegramMessenger/Telegram-iOS
+
+git checkout 24638bc69b
+
+# apply changes http://github.com/col3name/timequoute-voice-message/blob/feature/stream-dynamic-island/changes.patch
+git apply changes.patch
+```
+
+## 2.  Run ios demo app with player mechanics (fast way without build heavy entire telegram-ios app)
+
 Song playlist and an animated full-screen music player.
 
 Visual prototype, not a Telegram client or API integration. It plays demo audio bundled with the app (MP3 and M4A files); playlists and profile actions are local UI examples.
