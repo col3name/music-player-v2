@@ -12,11 +12,6 @@ struct MiniArtworkFrameKey: PreferenceKey {
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
-struct MiniTitleFrameKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
-}
-
 struct FullArtworkFrameKey: PreferenceKey {
     static let defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
@@ -31,7 +26,6 @@ struct MusicSheetScene: View {
     @State private var isSheetVisible = true
     @State private var miniArtworkFrame: CGRect = .zero
     @State private var fullArtworkFrame: CGRect = .zero
-    @State private var miniTitleFrame: CGRect = .zero
     @State private var isTopRowDragging = false
     @State private var artworkGestureAxis: ArtworkGestureAxis?
     @State private var artworkGestureStartProgress: CGFloat = 1
@@ -107,6 +101,7 @@ struct MusicSheetScene: View {
                         isTopRowDragging: $isTopRowDragging,
                         settle: settleExpansion,
                         travelDistance: geometry.size.height * 0.72,
+                        sceneWidth: geometry.size.width,
                         // The collapsed sheet has a white surface regardless
                         // of the selected artwork, so keep its controls dark.
                         darkAppearance: darkPoster && expansionProgress > 0.5
@@ -126,11 +121,10 @@ struct MusicSheetScene: View {
                 }
 
                 heroElements(sceneSize: geometry.size)
-                    .zIndex(3)
+                    .zIndex(5)
             }
             .coordinateSpace(name: "musicScene")
             .onPreferenceChange(MiniArtworkFrameKey.self) { miniArtworkFrame = $0 }
-            .onPreferenceChange(MiniTitleFrameKey.self) { miniTitleFrame = $0 }
             .onPreferenceChange(FullArtworkFrameKey.self) { fullArtworkFrame = $0 }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
@@ -350,15 +344,6 @@ struct MusicSheetScene: View {
                          width: sourceArtwork.width,
                          height: sourceArtwork.height)
                 : interpolatedArtworkFrame
-            let titleSource = miniTitleFrame.width > 0
-                ? miniTitleFrame
-                : CGRect(x: 72, y: sceneSize.height - 259, width: 150, height: 40)
-            let titleFrame = CGRect(
-                x: titleSource.minX + 52 * expansionProgress,
-                y: titleSource.minY,
-                width: titleSource.width,
-                height: titleSource.height
-            )
             let p = expansionProgress
             // Add a small scale transform on top of the frame interpolation so
             // the poster visibly grows with the finger during an upward drag.
@@ -460,7 +445,10 @@ struct MusicSheetScene: View {
                             .frame(width: artworkFrame.width, height: artworkFrame.height)
                     }
                         .frame(width: artworkFrame.width, height: artworkFrame.height)
-                        .position(x: artworkFrame.midX + resistedDrag, y: artworkFrame.midY)
+                        .position(
+                            x: artworkFrame.midX + resistedDrag,
+                            y: artworkFrame.midY + 4 * (1 - p)
+                        )
                         .zIndex(1)
                         // Scale after positioning so the transform is centered on
                         // the poster's on-screen bounds, not its layout origin.
@@ -539,23 +527,6 @@ struct MusicSheetScene: View {
                         .allowsHitTesting(p > 0.5 || artworkGestureAxis != nil)
                         .id(player.track.id)
                         .transition(slideTransition)
-                }
-
-                if titleFrame.width > 0, titleFrame.height > 0 {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.track.title)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(darkAppearance ? .white : .black)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.55)
-                        Text(player.track.artist)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(darkAppearance ? .white.opacity(0.78) : .black.opacity(0.72))
-                            .lineLimit(1)
-                    }
-                    .frame(width: titleFrame.width, height: titleFrame.height, alignment: .leading)
-                    .position(x: titleFrame.midX, y: titleFrame.midY)
-                    .allowsHitTesting(false)
                 }
 
             }
@@ -695,6 +666,7 @@ private struct MiniPlayerPanel: View {
     @Binding var isTopRowDragging: Bool
     let settle: (CGFloat, CGFloat) -> Void
     let travelDistance: CGFloat
+    let sceneWidth: CGFloat
     let darkAppearance: Bool
     @State private var dragStartProgress: CGFloat = 0
     @State private var isDragging = false
@@ -717,24 +689,6 @@ private struct MiniPlayerPanel: View {
                 .accessibilityLabel("Expand current track artwork")
                 .accessibilityHint("Opens full-screen player")
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.track.title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .foregroundStyle(darkAppearance ? .white : .black)
-                    Text(player.track.artist)
-                        .font(.system(size: 13.5))
-                        .lineLimit(1)
-                        .foregroundStyle(darkAppearance ? .white.opacity(0.78) : .black.opacity(0.72))
-                }
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: MiniTitleFrameKey.self,
-                                               value: proxy.frame(in: .named("musicScene")))
-                    }
-                }
-                .opacity(0)
                 Spacer(minLength: 8)
                 ShareLink(item: "Listening to \(player.track.title) — \(player.track.artist)") {
                     Image(systemName: "square.and.arrow.up")
@@ -747,6 +701,35 @@ private struct MiniPlayerPanel: View {
             .padding(.horizontal, 16)
             .padding(.top, 15)
             .padding(.bottom, 9)
+            .overlay {
+                GeometryReader { proxy in
+                    let titleFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+                    let artistFont = UIFont.systemFont(ofSize: 13.5)
+                    let titleWidth = (player.track.title as NSString)
+                        .size(withAttributes: [.font: titleFont]).width
+                    let artistWidth = (player.track.artist as NSString)
+                        .size(withAttributes: [.font: artistFont]).width
+                    let labelWidth = min(proxy.size.width - 40, max(titleWidth, artistWidth))
+                    let sourceCenterX = 72 + labelWidth / 2
+                    let currentCenterX = sourceCenterX
+                        + (sceneWidth / 2 - sourceCenterX) * progress
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.track.title)
+                            .font(.system(size: 17, weight: .semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(darkAppearance ? .white : .black)
+                        Text(player.track.artist)
+                            .font(.system(size: 13.5))
+                            .lineLimit(1)
+                            .foregroundStyle(darkAppearance ? .white.opacity(0.88) : .black.opacity(0.72))
+                    }
+                    .multilineTextAlignment(.leading)
+                    .frame(width: labelWidth)
+                    .position(x: currentCenterX, y: proxy.size.height / 2)
+                }
+                .allowsHitTesting(false)
+            }
             .contentShape(Rectangle())
             .simultaneousGesture(
                 DragGesture(minimumDistance: 5)
